@@ -1,10 +1,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, FlatList, ActivityIndicator, Pressable, StyleSheet, Platform } from 'react-native';
+import { View, Text, FlatList, ActivityIndicator, Pressable, StyleSheet, Platform, Alert } from 'react-native';
 import { Stack } from 'expo-router';
 
 import { Container } from '~/components/Container';
 import { useAppStore } from '~/store/store';
-import { fetchAvailableTranslations, type ApiBibleTranslation } from '~/services/apiBible';
+import { fetchAvailableTranslations, downloadAndStoreTranslation, type ApiBibleTranslation } from '~/services/apiBible';
 import * as db from '~/db/database';
 
 const IS_WEB = Platform.OS === 'web';
@@ -20,12 +20,11 @@ export default function SettingsScreen() {
     const setAvailableTranslations = useAppStore((state) => state.setAvailableTranslations);
     const selectedTranslationId = useAppStore((state) => state.selectedTranslationId);
     const setSelectedTranslation = useAppStore((state) => state.setSelectedTranslation);
-    // Get download status from store for progress/error display
-    const { isDownloading, downloadProgress, downloadError } = useAppStore(state => ({
-        isDownloading: state.isDownloading,
-        downloadProgress: state.downloadProgress,
-        downloadError: state.downloadError,
-    }));
+    // Select download status individually
+    const isDownloading = useAppStore(state => state.isDownloading);
+    const downloadProgress = useAppStore(state => state.downloadProgress);
+    const downloadError = useAppStore(state => state.downloadError);
+    const downloadingTranslationId = useAppStore(state => state.downloadingTranslationId); // Also get this for renderItem
 
     const [displayList, setDisplayList] = useState<DisplayTranslation[]>([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -74,7 +73,7 @@ export default function SettingsScreen() {
         } finally {
             setIsLoading(false);
         }
-    }, [apiKeysLoaded, apiBibleApiKey, selectedTranslationId, setAvailableTranslations]);
+    }, [apiKeysLoaded, apiBibleApiKey, selectedTranslationId]);
 
     useEffect(() => {
         loadData();
@@ -85,43 +84,61 @@ export default function SettingsScreen() {
             // Allow selection if downloaded OR if on web (reading uses API directly)
             setSelectedTranslation(translation.id);
         } else if (!IS_WEB && !isDownloading) {
-            // Start download only on native and if not already downloading
-            console.log(`TODO: Start download for ${translation.name} (${translation.id})`);
-            // Call downloadAndStoreTranslation(translation.id);
-            // Maybe show alert/confirmation first
+            // Ask for confirmation before downloading
+            Alert.alert(
+                "Confirm Download",
+                `Download the ${translation.name} translation? This may take some time and use data.`, 
+                [
+                    { text: "Cancel", style: "cancel" },
+                    { 
+                        text: "Download", 
+                        onPress: () => {
+                            // Call download function asynchronously
+                            downloadAndStoreTranslation(translation).catch(err => {
+                                // Error is already handled within download func and sets store state
+                                console.error("Download initiation failed (already logged):", err);
+                            });
+                        }
+                    }
+                ]
+            );
         }
     };
 
-    const renderItem = ({ item }: { item: DisplayTranslation }) => (
-        <Pressable
-            // Disable press handling if already downloading on native
-            disabled={!IS_WEB && isDownloading}
-            style={({ pressed }) => [
-                styles.itemBase,
-                item.isActive && styles.itemActive,
-                (pressed || (!IS_WEB && isDownloading)) && styles.itemDisabled,
-            ]}
-            onPress={() => handlePressItem(item)}
-        >
-            <View style={styles.infoContainer}>
-                <Text style={styles.name}>{item.name} ({item.abbreviation})</Text>
-                <Text style={styles.language}>{item.language.name}</Text>
-            </View>
-            <View style={styles.statusContainer}>
-                {/* Display Download Status */}
-                {IS_WEB ? (
-                     <Text style={styles.webNote}>Select to read</Text>
-                 ) : isDownloading ? (
-                     <Text style={styles.statusText}>Downloading {(downloadProgress * 100).toFixed(0)}%...</Text>
-                 ) : item.isDownloaded ? (
-                     <Text style={item.isActive ? styles.activeText : styles.statusText}>✓ Downloaded</Text>
-                 ) : (
-                     <Text style={styles.downloadButton}>Download</Text>
-                 )
-                }
-            </View>
-        </Pressable>
-    );
+    const renderItem = ({ item }: { item: DisplayTranslation }) => {
+        // Determine if the current item is the one being downloaded
+        const isCurrentDownload = isDownloading && item.id === downloadingTranslationId; // Use the reactive state variable
+
+        return (
+            <Pressable
+                disabled={!IS_WEB && isDownloading && !isCurrentDownload} // Disable others while one downloads
+                style={({ pressed }) => [
+                    styles.itemBase,
+                    item.isActive && styles.itemActive,
+                    (pressed || (!IS_WEB && isDownloading && !isCurrentDownload)) && styles.itemDisabled,
+                ]}
+                onPress={() => handlePressItem(item)}
+            >
+                <View style={styles.infoContainer}>
+                    <Text style={styles.name}>{item.name} ({item.abbreviation})</Text>
+                    <Text style={styles.language}>{item.language.name}</Text>
+                </View>
+                <View style={styles.statusContainer}>
+                    {/* Display Download Status */}
+                    {IS_WEB ? (
+                         <Text style={styles.webNote}>Select to read</Text>
+                     ) : isCurrentDownload ? ( // Show progress for the item being downloaded
+                         <Text style={styles.statusText}>Downloading {(downloadProgress * 100).toFixed(0)}%...</Text>
+                     ) : item.isDownloaded ? (
+                         <Text style={item.isActive ? styles.activeText : styles.statusText}>✓ Downloaded</Text>
+                     ) : (
+                         <Text style={styles.downloadButton}>Download</Text>
+                     )
+                    }
+                </View>
+            </Pressable>
+        );
+    };
 
     return (
         <Container>
@@ -137,7 +154,7 @@ export default function SettingsScreen() {
                         renderItem={renderItem}
                         keyExtractor={(item) => item.id}
                         ListEmptyComponent={<Text>No translations found.</Text>}
-                        extraData={{ isDownloading, selectedTranslationId }}
+                        extraData={{ selectedTranslationId, isDownloading, downloadProgress }}
                     />
                 )}
                  {apiKeysLoaded && !apiBibleApiKey && !isLoading && !error && 
@@ -151,7 +168,6 @@ export default function SettingsScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        padding: 15,
     },
     itemBase: {
         backgroundColor: '#fff',
@@ -188,7 +204,7 @@ const styles = StyleSheet.create({
     },
     statusContainer: {
         minWidth: 100, 
-        alignItems: 'flex-end'
+        justifyContent: 'center'
     },
     statusText: {
         fontSize: 14,
@@ -201,7 +217,7 @@ const styles = StyleSheet.create({
     },
     downloadButton: {
         fontSize: 14,
-        color: '#007bff',
+        color: 'red',
         fontWeight: 'bold',
     },
     webNote: {

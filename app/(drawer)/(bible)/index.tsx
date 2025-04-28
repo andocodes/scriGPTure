@@ -6,6 +6,7 @@ import { useEffect, useState } from "react"
 import { Button } from "~/components/Button"
 import { Container } from "~/components/Container"
 import { useAppStore } from "~/store/store"
+import type { AppState } from "~/store/store"
 import * as db from "~/db/database"
 import * as api from "~/services/apiBible"
 import { type ApiBibleBook } from "~/services/apiBible"
@@ -19,10 +20,10 @@ interface Book extends Pick<ApiBibleBook, 'id' | 'name' | 'abbreviation'> {
 }
 
 export default function BibleBooksScreen() {
-  const { selectedTranslationId, apiBibleApiKey } = useAppStore(state => ({
-    selectedTranslationId: state.selectedTranslationId,
-    apiBibleApiKey: state.apiBibleApiKey, // Need API key for web fallback
-  }))
+  // Select primitive values individually
+  const selectedTranslationId = useAppStore((state: AppState) => state.selectedTranslationId);
+  const apiBibleApiKey = useAppStore((state: AppState) => state.apiBibleApiKey);
+
   const [books, setBooks] = useState<Book[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)

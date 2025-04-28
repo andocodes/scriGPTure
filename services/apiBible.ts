@@ -1,5 +1,7 @@
 import axios from 'axios';
 import { loadApiKeys } from '~/utils/apiKeyManager';
+import * as db from '~/db/database'; // Import database helpers
+import { useAppStore } from '~/store/store'; // Import store for progress updates
 
 const API_BASE_URL = 'https://api.scripture.api.bible/v1';
 
@@ -175,6 +177,126 @@ export async function fetchVersesForChapter(translationId: string, chapterId: st
     }
 }
 
-// TODO: Implement function to download and store an entire translation
-// This will involve calling the above functions iteratively and writing to SQLite.
-// export async function downloadAndStoreTranslation(translationId: string): Promise<void> { ... } 
+// --- Download and Store Function ---
+
+// Helper to chunk arrays for batch processing
+function chunkArray<T>(array: T[], size: number): T[][] {
+    const chunks: T[][] = [];
+    for (let i = 0; i < array.length; i += size) {
+        chunks.push(array.slice(i, i + size));
+    }
+    return chunks;
+}
+
+/**
+ * Downloads all content for a specific translation and stores it in the SQLite database.
+ * Reports progress via the Zustand store.
+ */
+export async function downloadAndStoreTranslation(
+    translation: Pick<ApiBibleTranslation, 'id' | 'abbreviation' | 'name' | 'language'>
+): Promise<void> {
+    const { setDownloadStatus, addDownloadedTranslation } = useAppStore.getState();
+    const translationId = translation.id;
+    let booksProcessed = 0;
+    let chaptersProcessed = 0;
+    let totalEstimatedChapters = 0;
+    const VERSE_BATCH_SIZE = 100; // Insert verses in chunks of 100
+
+    console.log(`Starting download for ${translation.name} (${translationId})...`);
+    setDownloadStatus(true, translationId, 0, null);
+
+    try {
+        // 1. Fetch Books
+        setDownloadStatus(true, translationId, 0.01, null);
+        const books = await fetchBooksForTranslation(translationId);
+        if (!books || books.length === 0) throw new Error('No books found');
+        totalEstimatedChapters = books.length * 20; // Still an estimate
+
+        await db.withTransaction(async () => {
+            console.log('Starting DB transaction for download...');
+
+            // 2. Clear existing data
+            console.log(`Clearing existing data for ${translationId}...`);
+            await db.run("DELETE FROM verses WHERE translation_id = ?", [translationId]);
+            await db.run("DELETE FROM chapters WHERE translation_id = ?", [translationId]);
+            await db.run("DELETE FROM books WHERE translation_id = ?", [translationId]);
+            await db.run("DELETE FROM translations WHERE id = ?", [translationId]);
+
+            // 3. Insert Translation Info
+            console.log(`Inserting translation info...`);
+            await db.run(
+                "INSERT INTO translations (id, abbreviation, name, language, downloaded) VALUES (?, ?, ?, ?, 0)",
+                [translationId, translation.abbreviation, translation.name, translation.language?.id ?? 'unknown']
+            );
+
+            // 4. Batch Insert Books
+            console.log(`Batch inserting ${books.length} books...`);
+            if (books.length > 0) {
+                const bookValues: any[] = [];
+                const placeholders = books.map((book, i) => {
+                    bookValues.push(book.id, translationId, book.abbreviation, book.name, book.nameLong, i + 1);
+                    return "(?, ?, ?, ?, ?, ?)";
+                }).join(', ');
+                const bookSql = `INSERT INTO books (id, translation_id, abbreviation, name, name_long, sort_order) VALUES ${placeholders}`;
+                await db.run(bookSql, bookValues);
+            }
+            booksProcessed = books.length;
+            setDownloadStatus(true, translationId, 0.1 + (booksProcessed / books.length) * 0.1, null);
+
+            // 5. Fetch and Batch Insert Chapters and Verses
+            let overallChapterIndex = 0;
+            for (const book of books) {
+                console.log(`Processing book: ${book.id}`);
+                const chapters = await fetchChaptersForBook(translationId, book.id);
+                if (!chapters || chapters.length === 0) continue; // Skip book if no chapters
+
+                // Batch insert chapters for this book
+                const chapterValues: any[] = [];
+                const chapterPlaceholders = chapters.map((chapter, j) => {
+                    chapterValues.push(chapter.id, translationId, book.id, chapter.reference, j + 1);
+                    return "(?, ?, ?, ?, ?)";
+                }).join(', ');
+                const chapterSql = `INSERT INTO chapters (id, translation_id, book_id, reference, sort_order) VALUES ${chapterPlaceholders}`;
+                await db.run(chapterSql, chapterValues);
+
+                // Fetch and batch insert verses for each chapter
+                for (const chapter of chapters) {
+                    overallChapterIndex++;
+                    const verses = await fetchVersesForChapter(translationId, chapter.id);
+                    if (!verses || verses.length === 0) continue; // Skip chapter if no verses
+
+                    // Batch insert verses in chunks
+                    const verseChunks = chunkArray(verses, VERSE_BATCH_SIZE);
+                    for (const chunk of verseChunks) {
+                        const verseValues: any[] = [];
+                        const versePlaceholders = chunk.map((verse, k) => {
+                            const verseNum = verse.reference.split(':')[1] ?? '0';
+                            verseValues.push(verse.id, translationId, book.id, chapter.id, verseNum, verse.content, overallChapterIndex * 1000 + k + 1); // Using a simple global sort order for verses for now
+                            return "(?, ?, ?, ?, ?, ?, ?)";
+                        }).join(', ');
+                        const verseSql = `INSERT INTO verses (id, translation_id, book_id, chapter_id, verse_number, content, sort_order) VALUES ${versePlaceholders}`;
+                        await db.run(verseSql, verseValues);
+                    }
+                    chaptersProcessed++;
+                    const progress = 0.2 + (chaptersProcessed / totalEstimatedChapters) * 0.7;
+                    setDownloadStatus(true, translationId, Math.min(progress, 0.95), null);
+                }
+                 console.log(`Finished processing book ${book.id}`);
+            }
+
+            // 6. Mark Translation as Downloaded
+            console.log(`Marking translation ${translationId} as downloaded...`);
+            await db.run("UPDATE translations SET downloaded = 1 WHERE id = ?", [translationId]);
+            
+            console.log('DB transaction committed.');
+        });
+
+        console.log(`Successfully downloaded ${translation.name}`);
+        addDownloadedTranslation(translationId);
+        setDownloadStatus(false, null, 1, null);
+
+    } catch (error) {
+        console.error(`Error downloading translation ${translationId}:`, error);
+        setDownloadStatus(false, translationId, useAppStore.getState().downloadProgress, error instanceof Error ? error.message : "Download failed");
+    }
+} 
