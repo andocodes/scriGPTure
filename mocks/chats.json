@@ -1,0 +1,42 @@
+{
+  "chats": [
+    {
+      "id": "1",
+      "title": "Understanding Psalms",
+      "lastMessage": "Tell me more about Psalm 23",
+      "messages": [
+        {
+          "id": "1-1",
+          "content": "Can you explain Psalm 23 to me?",
+          "isUser": true,
+          "timestamp": "2024-03-20T10:00:00Z"
+        },
+        {
+          "id": "1-2",
+          "content": "Psalm 23 is one of the most beloved passages in the Bible. It's a psalm of David that uses the metaphor of God as a shepherd caring for his sheep. Would you like me to break down its meaning verse by verse?",
+          "isUser": false,
+          "timestamp": "2024-03-20T10:00:05Z"
+        }
+      ]
+    },
+    {
+      "id": "2",
+      "title": "Proverbs Study",
+      "lastMessage": "What's the meaning of Proverbs 3:5-6?",
+      "messages": [
+        {
+          "id": "2-1",
+          "content": "I'm studying Proverbs 3:5-6. Can you help me understand it better?",
+          "isUser": true,
+          "timestamp": "2024-03-19T15:30:00Z"
+        },
+        {
+          "id": "2-2",
+          "content": "These verses emphasize trusting in God completely rather than relying on our own understanding. Would you like me to explain the historical context and practical application?",
+          "isUser": false,
+          "timestamp": "2024-03-19T15:30:05Z"
+        }
+      ]
+    }
+  ]
+}
