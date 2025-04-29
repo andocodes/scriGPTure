@@ -23,7 +23,9 @@ interface Verse extends Pick<ApiBibleVerse, 'id' | 'content' | 'reference'> {
 // Helper to extract verse number from reference (e.g., "Genesis 1:1" -> "1")
 function extractVerseNumber(reference: string): string {
     const parts = reference?.split(':');
-    return parts?.[1] ?? '?'; // Return last part after ':' or ' ? '
+    const numPart = parts?.[1];
+    // Return empty string if it's not a simple number (handles intro)
+    return /^[0-9]+$/.test(numPart) ? numPart : ''; 
 }
 
 // Define base styles for RenderHTML
@@ -102,10 +104,18 @@ export default function BibleChapterReaderScreen() {
           fetchedBookId = chapterInfo?.book_id ?? null;
 
           // Fetch verses for the chapter from DB
-          // Select verse_number, not reference
+          // Adjust query based on whether it's an intro chapter
+          const isIntro = chapterId.endsWith('.intro');
+          const verseIdentifier = isIntro ? 'intro' : chapterId;
+          const verseNumberColumn = isIntro ? '' : 'verse_number'; // Decide which column based on type
+          const whereClause = isIntro ? "verse_number = 'intro'" : "chapter_id = ?";
+          const queryParams = isIntro ? [currentTranslationId, chapterId.replace('.intro', '')] : [currentTranslationId, chapterId]; // Adjust params
+
+          // Fetch verses for the chapter from DB
+          // Adjust query based on whether it's an intro chapter
           const verseDbData = await db.all<{ id: string, verse_number: string, content: string }>(
-            "SELECT id, verse_number, content FROM verses WHERE translation_id = ? AND chapter_id = ? ORDER BY sort_order ASC",
-            [currentTranslationId, chapterId],
+            `SELECT id, verse_number, content FROM verses WHERE translation_id = ? AND chapter_id = ? AND ${whereClause} ORDER BY sort_order ASC`,
+            queryParams,
           );
           // Map DB data to Verse interface, constructing the reference
           verseData = verseDbData.map(v => ({
@@ -157,13 +167,17 @@ export default function BibleChapterReaderScreen() {
             estimatedItemSize={50} // Adjust
             renderItem={({ item }) => {
               console.log("Verse Content:", item.content); // Log verse content
+              const verseNumDisplay = extractVerseNumber(item.reference);
               return (
                 <View className="flex-row mb-2">
-                  <Text className="text-sm font-bold w-8 pt-1">
-                    {extractVerseNumber(item.reference)} {/* Extract verse num */}
-                  </Text>
+                  {/* Only show number if it exists */}
+                  {verseNumDisplay && (
+                      <Text className="text-sm font-bold w-8 pt-1">
+                        {verseNumDisplay} 
+                      </Text>
+                  )}
                   {/* Render HTML content from verse */}
-                  <View style={{ flex: 1 }}>
+                  <View style={{ flex: 1, marginLeft: verseNumDisplay ? 0 : 32 }}> {/* Indent content if no number */}
                      {item.content && item.content.trim() !== '' ? (
                          <RenderHTML
                             contentWidth={width - 64} // Adjust width based on padding/margins

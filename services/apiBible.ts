@@ -155,7 +155,7 @@ export async function fetchVersesForChapter(translationId: string, chapterId: st
     const apiKey = await getApiKey();
     try {
         const params = {
-            'content-type': 'html',
+            'content-type': 'text',
             'include-notes': 'false',
             'include-titles': 'true',
             'include-chapter-numbers': 'false',
@@ -230,7 +230,7 @@ export async function downloadAndStoreTranslation(
             console.log('Starting DB transaction for download...');
 
             // 2. Clear existing data
-            console.log(`Clearing existing data for ${translationId}...`);
+            console.log(`Clearing existing data for translation ID: ${translationId}...`);
             await db.run("DELETE FROM verses WHERE translation_id = ?", [translationId]);
             await db.run("DELETE FROM chapters WHERE translation_id = ?", [translationId]);
             await db.run("DELETE FROM books WHERE translation_id = ?", [translationId]);
@@ -315,10 +315,12 @@ export async function downloadAndStoreTranslation(
                     for (const chunk of verseChunks) {
                         const verseValues: any[] = [];
                         const versePlaceholders = chunk.map((verse, k) => {
-                            const verseNum = verse.reference.split(':')[1] ?? '0';
+                            // Handle intro chapters - use 'intro' as verse number
+                            const isIntro = chapter.id.endsWith('.intro');
+                            const verseNum = isIntro ? 'intro' : (verse.reference.split(':')[1] ?? '0');
                             // Ensure content is not null before pushing
                             const verseContent = verse.content ?? ''; 
-                            verseValues.push(verse.id, translationId, book.id, chapter.id, verseNum, verseContent, overallChapterIndex * 1000 + k + 1); // Use verseContent
+                            verseValues.push(verse.id, translationId, book.id, chapter.id, verseNum, verseContent, overallChapterIndex * 1000 + k + 1); // Use verseNum
                             return "(?, ?, ?, ?, ?, ?, ?)";
                         }).join(', ');
                         // Use INSERT OR REPLACE for verses

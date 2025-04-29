@@ -90,10 +90,10 @@ export default function BibleChaptersScreen() {
         }
         setBookName(fetchedBookName);
         console.log('Raw chapterData:', JSON.stringify(chapterData)); // Log raw data
-        // Filter out potential book entry (assuming chapter IDs contain '.')
-        const filteredChapters = chapterData.filter(c => c.id.includes('.')); // Use ID filter
-        console.log('Filtered chapterData:', JSON.stringify(filteredChapters)); // Log filtered data
-        setChapters(filteredChapters);
+        // Remove filtering - display all fetched chapters including intro
+        // const filteredChapters = chapterData.filter(c => c.id.includes('.')); 
+        // console.log('Filtered chapterData:', JSON.stringify(filteredChapters));
+        setChapters(chapterData); // Set raw data
 
       } catch (err) {
         console.error(`Error loading chapters (${IS_WEB ? 'API' : 'DB'}):`, err);

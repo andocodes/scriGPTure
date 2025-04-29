@@ -38,6 +38,7 @@ export default function BibleBooksScreen() {
   useEffect(() => {
     const loadBooks = async () => {
       let currentTranslationId = selectedTranslationId
+      console.log('[BibleBooksScreen] Initial selectedTranslationId from store:', selectedTranslationId);
 
       // TEMP: Default to KJV if nothing selected for initial testing
       // TODO: Implement proper translation selection/default logic
@@ -47,8 +48,11 @@ export default function BibleBooksScreen() {
       }
       // END TEMP
 
+      console.log('[BibleBooksScreen] Effective currentTranslationId for loading:', currentTranslationId);
+
       if (!currentTranslationId) {
         setError("No Bible translation selected or defaulted.")
+        console.log('[BibleBooksScreen] Error: No currentTranslationId.');
         setBooks([])
         return
       }
@@ -81,10 +85,12 @@ export default function BibleBooksScreen() {
             "SELECT id, abbreviation, name FROM books WHERE translation_id = ? ORDER BY sort_order ASC",
             [currentTranslationId],
           )
+          console.log('[BibleBooksScreen] Native DB query result:', JSON.stringify(bookData));
         }
         setBooks(bookData)
       } catch (err) {
         console.error(`Error loading books (${IS_WEB ? 'API' : 'DB'}):`, err)
+        console.log('[BibleBooksScreen] Caught error during loadBooks:', err);
         setError(err instanceof Error ? err.message : "Failed to load books")
       } finally {
         setIsLoading(false)
@@ -92,7 +98,7 @@ export default function BibleBooksScreen() {
     }
 
     loadBooks()
-  }, [selectedTranslationId, apiBibleApiKey]) // Re-run if selection or key changes
+  }, [selectedTranslationId, apiBibleApiKey, downloadedTranslationIds])
 
   // Check if the selected translation is downloaded (only relevant on native)
   const isSelectedDownloaded = IS_WEB || (selectedTranslationId ? downloadedTranslationIds.includes(selectedTranslationId) : false);
