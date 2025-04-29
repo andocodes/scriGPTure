@@ -170,6 +170,7 @@ export async function fetchVersesForChapter(translationId: string, chapterId: st
                 params: params,
             }
         );
+        console.log(`Raw verse response for ${chapterId}:`, JSON.stringify(response.data)); // Log raw response
         return response.data.data;
     } catch (error) {
         console.error(`Error fetching verses for chapter ${chapterId} in translation ${translationId}:`, error);

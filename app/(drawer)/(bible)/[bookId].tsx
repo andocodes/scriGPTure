@@ -1,6 +1,6 @@
 import { FlashList } from "@shopify/flash-list";
 import { Text, View, Platform } from "react-native";
-import { Link, Stack, useLocalSearchParams } from "expo-router";
+import { Link, Stack, useLocalSearchParams, useNavigation } from "expo-router";
 import { useEffect, useState } from "react";
 
 import { Button } from "~/components/Button";
@@ -21,6 +21,7 @@ interface Chapter extends Pick<ApiBibleChapter, 'id' | 'reference'> {
 
 export default function BibleChaptersScreen() {
   const { bookId } = useLocalSearchParams<{ bookId: string }>();
+  const navigation = useNavigation();
   // Select state individually
   const selectedTranslationId = useAppStore((state: AppState) => state.selectedTranslationId);
   const apiBibleApiKey = useAppStore((state: AppState) => state.apiBibleApiKey);
@@ -88,8 +89,10 @@ export default function BibleChaptersScreen() {
           );
         }
         setBookName(fetchedBookName);
+        console.log('Raw chapterData:', JSON.stringify(chapterData)); // Log raw data
         // Filter out potential book entry (assuming chapter refs contain a space)
         const filteredChapters = chapterData.filter(c => c.reference.includes(' '));
+        console.log('Filtered chapterData:', JSON.stringify(filteredChapters)); // Log filtered data
         setChapters(filteredChapters);
 
       } catch (err) {
@@ -107,9 +110,13 @@ export default function BibleChaptersScreen() {
   const selectedTranslationAbbr = availableTranslations.find(t => t.id === selectedTranslationId)?.abbreviation ?? '';
   const screenTitle = bookName ? `${bookName} (${selectedTranslationAbbr})` : `Select Chapter (${selectedTranslationAbbr})`;
 
+  // Update header title dynamically when bookName or abbreviation changes
+  useEffect(() => {
+    navigation.setOptions({ title: screenTitle });
+  }, [navigation, screenTitle]);
+
   return (
     <Container>
-      <Stack.Screen options={{ title: screenTitle, headerBackVisible: true }} />
       <View className="flex-1 p-4">
         {isLoading && <Text>Loading chapters...</Text>}
         {error && <Text className="text-red-500">Error: {error}</Text>}

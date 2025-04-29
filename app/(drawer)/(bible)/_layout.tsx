@@ -5,8 +5,8 @@ import { TabBarIcon } from "~/components/TabBarIcon"
 export default function BibleStackLayout() {
   return (
     <Stack
-      // You might configure Stack header options here if needed,
-      // but individual screens (like [bookId]) will control their own.
+      // Set header tint color for the Stack navigator
+      screenOptions={{ headerTintColor: 'red' }}
     >
       {/* Define a screen that will render the Tabs layout */}
       {/* Expo Router implicitly knows to use the Tabs config for this route */}
@@ -14,8 +14,8 @@ export default function BibleStackLayout() {
       {/* or adjust naming if this doesn't work implicitly. */}
       <Stack.Screen name="index" options={{ headerShown: false }}/>
       <Stack.Screen name="favourites" options={{ headerShown: false }}/>
-      <Stack.Screen name="[bookId]" /> 
-      <Stack.Screen name="chapter/[chapterId]" /> 
+      <Stack.Screen name="[bookId]" options={{ headerShown: true }} /> 
+      <Stack.Screen name="chapter/[chapterId]" options={{ headerShown: true }} /> 
     </Stack>
   );
 } 

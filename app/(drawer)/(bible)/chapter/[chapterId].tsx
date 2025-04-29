@@ -1,6 +1,6 @@
 import { FlashList } from "@shopify/flash-list";
 import { Text, View, Platform } from "react-native";
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Stack, useLocalSearchParams, useNavigation } from "expo-router";
 import { useEffect, useState } from "react";
 import RenderHTML from 'react-native-render-html'; // To render HTML content from API
 import { useWindowDimensions } from 'react-native';
@@ -34,6 +34,7 @@ const tagsStyles = {
 
 export default function BibleChapterReaderScreen() {
   const { chapterId } = useLocalSearchParams<{ chapterId: string }>();
+  const navigation = useNavigation();
   const selectedTranslationId = useAppStore((state: AppState) => state.selectedTranslationId);
   const setCurrentLocation = useAppStore((state: AppState) => state.setCurrentLocation);
   const apiBibleApiKey = useAppStore((state: AppState) => state.apiBibleApiKey);
@@ -137,9 +138,13 @@ export default function BibleChapterReaderScreen() {
   const selectedTranslationAbbr = availableTranslations.find(t => t.id === selectedTranslationId)?.abbreviation ?? '';
   const screenTitle = chapterReference ? `${chapterReference} (${selectedTranslationAbbr})` : `Loading... (${selectedTranslationAbbr})`;
 
+  // Update header title dynamically
+  useEffect(() => {
+    navigation.setOptions({ title: screenTitle });
+  }, [navigation, screenTitle]);
+
   return (
     <Container>
-      <Stack.Screen options={{ title: screenTitle, headerBackVisible: true }} />
       <View className="flex-1 p-4">
         {isLoading && <Text>Loading verses...</Text>}
         {error && <Text className="text-red-500">Error: {error}</Text>}
@@ -159,12 +164,16 @@ export default function BibleChapterReaderScreen() {
                   </Text>
                   {/* Render HTML content from verse */}
                   <View style={{ flex: 1 }}>
-                     <RenderHTML
-                        contentWidth={width - 64} // Adjust width based on padding/margins
-                        source={{ html: item.content }}
-                        baseStyle={{ color: 'black' }} // Keep base style
-                        tagsStyles={tagsStyles} // Add tag-specific styles
-                    />
+                     {item.content && item.content.trim() !== '' ? (
+                         <RenderHTML
+                            contentWidth={width - 64} // Adjust width based on padding/margins
+                            source={{ html: item.content }}
+                            baseStyle={{ color: 'black', fontSize: 16 }} // Add fontSize
+                            tagsStyles={tagsStyles} // Add tag-specific styles
+                        />
+                     ) : (
+                         <Text style={{color: '#999', fontSize: 16, fontStyle: 'italic'}}>[Verse text not available]</Text>
+                     )}
                   </View>
                 </View>
               );

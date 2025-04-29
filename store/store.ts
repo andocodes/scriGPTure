@@ -4,6 +4,7 @@ import { loadApiKeys as loadKeysFromSecureStore } from '~/utils/apiKeyManager';
 import { type ApiBibleTranslation } from '~/services/apiBible'; // Assuming interface is exported
 import * as db from '~/db/database'; // Import db helpers
 import { Platform } from 'react-native'; // Import Platform
+import { fetchAvailableTranslations } from '~/services/apiBible'; // Import the function
 
 const IS_WEB = Platform.OS === 'web';
 const SELECTED_TRANSLATION_KEY = 'selectedTranslationId';
@@ -119,6 +120,25 @@ export const initializeStore = async () => {
   // 1. Load API Keys
   await useAppStore.getState().loadApiKeys();
   
+  // Ensure API keys are loaded AND valid before proceeding
+  const { apiBibleApiKey, setAvailableTranslations } = useAppStore.getState();
+  if (!apiBibleApiKey) {
+    console.warn("Store initialized but API Bible key is missing. Cannot load translations.");
+    // Set defaults without translations
+    // (Existing logic below handles loading selectedId/downloadedIds)
+  } else {
+    // 1.5 Fetch Available Translations if API key exists
+    try {
+      console.log("Fetching available translations during init...");
+      const translations = await fetchAvailableTranslations(); // Use the function from apiBible service
+      setAvailableTranslations(translations);
+      console.log(`Loaded ${translations.length} available translations.`);
+    } catch (e) {
+      console.error("Failed to load available translations during init:", e);
+      // Proceed without translations if fetch fails?
+    }
+  }
+
   // 2. Load persisted preferences (selected translation)
   let storedSelectedId: string | null = null;
   try {
