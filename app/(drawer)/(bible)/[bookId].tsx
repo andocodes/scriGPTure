@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Button } from "~/components/Button";
 import { Container } from "~/components/Container";
 import { useAppStore } from "~/store/store";
+import type { AppState } from "~/store/store";
 import * as db from "~/db/database";
 import * as api from "~/services/apiBible";
 import { type ApiBibleChapter } from "~/services/apiBible";
@@ -20,10 +21,11 @@ interface Chapter extends Pick<ApiBibleChapter, 'id' | 'reference'> {
 
 export default function BibleChaptersScreen() {
   const { bookId } = useLocalSearchParams<{ bookId: string }>();
-  const { selectedTranslationId, apiBibleApiKey } = useAppStore(state => ({
-      selectedTranslationId: state.selectedTranslationId,
-      apiBibleApiKey: state.apiBibleApiKey, // Need API key for web fallback
-  }));
+  // Select state individually
+  const selectedTranslationId = useAppStore((state: AppState) => state.selectedTranslationId);
+  const apiBibleApiKey = useAppStore((state: AppState) => state.apiBibleApiKey);
+  const availableTranslations = useAppStore((state: AppState) => state.availableTranslations); // Get available translations
+  
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [bookName, setBookName] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -86,7 +88,9 @@ export default function BibleChaptersScreen() {
           );
         }
         setBookName(fetchedBookName);
-        setChapters(chapterData);
+        // Filter out potential book entry (assuming chapter refs contain a space)
+        const filteredChapters = chapterData.filter(c => c.reference.includes(' '));
+        setChapters(filteredChapters);
 
       } catch (err) {
         console.error(`Error loading chapters (${IS_WEB ? 'API' : 'DB'}):`, err);
@@ -99,9 +103,13 @@ export default function BibleChaptersScreen() {
     loadChapters();
   }, [selectedTranslationId, bookId, apiBibleApiKey]);
 
+  // Find the abbreviation of the selected translation
+  const selectedTranslationAbbr = availableTranslations.find(t => t.id === selectedTranslationId)?.abbreviation ?? '';
+  const screenTitle = bookName ? `${bookName} (${selectedTranslationAbbr})` : `Select Chapter (${selectedTranslationAbbr})`;
+
   return (
     <Container>
-      <Stack.Screen options={{ title: bookName ? `${bookName}` : "Select Chapter" }} />
+      <Stack.Screen options={{ title: screenTitle, headerBackVisible: true }} />
       <View className="flex-1 p-4">
         {isLoading && <Text>Loading chapters...</Text>}
         {error && <Text className="text-red-500">Error: {error}</Text>}

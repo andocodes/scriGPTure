@@ -195,7 +195,7 @@ function chunkArray<T>(array: T[], size: number): T[][] {
 export async function downloadAndStoreTranslation(
     translation: Pick<ApiBibleTranslation, 'id' | 'abbreviation' | 'name' | 'language'>
 ): Promise<void> {
-    const { setDownloadStatus, addDownloadedTranslation } = useAppStore.getState();
+    const { setDownloadStatus, addDownloadedTranslation, setSelectedTranslation } = useAppStore.getState();
     const translationId = translation.id;
     let booksProcessed = 0;
     let chaptersProcessed = 0;
@@ -271,7 +271,9 @@ export async function downloadAndStoreTranslation(
                         const verseValues: any[] = [];
                         const versePlaceholders = chunk.map((verse, k) => {
                             const verseNum = verse.reference.split(':')[1] ?? '0';
-                            verseValues.push(verse.id, translationId, book.id, chapter.id, verseNum, verse.content, overallChapterIndex * 1000 + k + 1); // Using a simple global sort order for verses for now
+                            // Ensure content is not null before pushing
+                            const verseContent = verse.content ?? ''; 
+                            verseValues.push(verse.id, translationId, book.id, chapter.id, verseNum, verseContent, overallChapterIndex * 1000 + k + 1); // Use verseContent
                             return "(?, ?, ?, ?, ?, ?, ?)";
                         }).join(', ');
                         const verseSql = `INSERT INTO verses (id, translation_id, book_id, chapter_id, verse_number, content, sort_order) VALUES ${versePlaceholders}`;
@@ -293,6 +295,7 @@ export async function downloadAndStoreTranslation(
 
         console.log(`Successfully downloaded ${translation.name}`);
         addDownloadedTranslation(translationId);
+        setSelectedTranslation(translationId); // Auto-select after download
         setDownloadStatus(false, null, 1, null);
 
     } catch (error) {

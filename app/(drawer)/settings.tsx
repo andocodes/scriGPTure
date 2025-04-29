@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, FlatList, ActivityIndicator, Pressable, StyleSheet, Platform, Alert } from 'react-native';
+import { View, Text, FlatList, ActivityIndicator, Pressable, StyleSheet, Platform, Alert, TextInput } from 'react-native';
 import { Stack } from 'expo-router';
 
 import { Container } from '~/components/Container';
@@ -24,11 +24,13 @@ export default function SettingsScreen() {
     const isDownloading = useAppStore(state => state.isDownloading);
     const downloadProgress = useAppStore(state => state.downloadProgress);
     const downloadError = useAppStore(state => state.downloadError);
-    const downloadingTranslationId = useAppStore(state => state.downloadingTranslationId); // Also get this for renderItem
+    const downloadingTranslationId = useAppStore(state => state.downloadingTranslationId);
+    const downloadedTranslationIds = useAppStore(state => state.downloadedTranslationIds); // Get downloaded IDs
 
     const [displayList, setDisplayList] = useState<DisplayTranslation[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [searchTerm, setSearchTerm] = useState('');
 
     const loadData = useCallback(async () => {
         if (!apiKeysLoaded) {
@@ -48,7 +50,20 @@ export default function SettingsScreen() {
         setError(null);
         try {
             const apiTranslations = await fetchAvailableTranslations();
-            setAvailableTranslations(apiTranslations);
+            
+            // --- De-duplication Logic Start (by Name) ---
+            const uniqueNameTranslations: ApiBibleTranslation[] = [];
+            const seenNames = new Set<string>(); // Track seen translation names
+            for (const translation of apiTranslations) {
+                if (!seenNames.has(translation.name)) { // Check translation name
+                    uniqueNameTranslations.push(translation);
+                    seenNames.add(translation.name); // Add translation name to set
+                }
+            }
+            // --- De-duplication Logic End ---
+
+            // Use the unique list for further processing
+            setAvailableTranslations(uniqueNameTranslations); 
 
             let downloadedIds = new Set<string>();
             if (!IS_WEB) { // Only check DB on native
@@ -59,7 +74,7 @@ export default function SettingsScreen() {
             }
             
             // On web, assume nothing is downloaded unless we implement web storage later
-            const combinedList = apiTranslations.map(apiT => ({
+            const combinedList = uniqueNameTranslations.map(apiT => ({
                 ...apiT,
                 // On web, isDownloaded is always false for now
                 isDownloaded: IS_WEB ? false : downloadedIds.has(apiT.id),
@@ -73,11 +88,22 @@ export default function SettingsScreen() {
         } finally {
             setIsLoading(false);
         }
-    }, [apiKeysLoaded, apiBibleApiKey, selectedTranslationId]);
+    }, [apiKeysLoaded, apiBibleApiKey, selectedTranslationId, downloadedTranslationIds]);
 
     useEffect(() => {
         loadData();
     }, [loadData]);
+
+    // Filter logic: derive filtered list based on searchTerm
+    const filteredList = displayList.filter(item => {
+        if (!searchTerm) return true; // Show all if search is empty
+        const lowerSearchTerm = searchTerm.toLowerCase();
+        return (
+            item.name.toLowerCase().includes(lowerSearchTerm) ||
+            item.abbreviation.toLowerCase().includes(lowerSearchTerm) ||
+            item.language.name.toLowerCase().includes(lowerSearchTerm)
+        );
+    });
 
     const handlePressItem = (translation: DisplayTranslation) => {
         if (translation.isDownloaded || IS_WEB) {
@@ -130,7 +156,9 @@ export default function SettingsScreen() {
                      ) : isCurrentDownload ? ( // Show progress for the item being downloaded
                          <Text style={styles.statusText}>Downloading {(downloadProgress * 100).toFixed(0)}%...</Text>
                      ) : item.isDownloaded ? (
-                         <Text style={item.isActive ? styles.activeText : styles.statusText}>✓ Downloaded</Text>
+                         <Text style={item.isActive ? styles.activeText : styles.statusText}>
+                             ✓ Downloaded {item.isActive ? '(Active)' : ''}
+                         </Text>
                      ) : (
                          <Text style={styles.downloadButton}>Download</Text>
                      )
@@ -144,13 +172,21 @@ export default function SettingsScreen() {
         <Container>
             <Stack.Screen options={{ title: 'Settings & Translations' }} />
             <View style={styles.container}>
+                <TextInput
+                    style={styles.searchInput}
+                    placeholder="Search translations (name, lang, abbr)..."
+                    value={searchTerm}
+                    onChangeText={setSearchTerm}
+                    placeholderTextColor="#999"
+                />
+
                 {!apiKeysLoaded && <Text>Loading API keys...</Text>}
                 {error && <Text style={styles.errorText}>Error: {error}</Text>}
                 {isLoading && <ActivityIndicator style={{ marginTop: 20 }} size="large" color="#0000ff" />}
                 
                 {!isLoading && !error && apiKeysLoaded && apiBibleApiKey && (
                     <FlatList
-                        data={displayList}
+                        data={filteredList}
                         renderItem={renderItem}
                         keyExtractor={(item) => item.id}
                         ListEmptyComponent={<Text>No translations found.</Text>}
@@ -169,11 +205,21 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
     },
+    searchInput: {
+        height: 40,
+        borderColor: '#ccc',
+        borderWidth: 1,
+        borderRadius: 8,
+        paddingHorizontal: 15,
+        marginBottom: 15,
+        backgroundColor: '#fff',
+        fontSize: 16,
+    },
     itemBase: {
         backgroundColor: '#fff',
         paddingVertical: 15,
         paddingHorizontal: 20,
-        marginBottom: 10,
+        marginBottom: 15,
         borderRadius: 8,
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -182,9 +228,9 @@ const styles = StyleSheet.create({
         borderColor: '#ddd',
     },
     itemActive: {
-        borderColor: '#007bff',
+        borderColor: 'red',
         borderWidth: 2,
-        backgroundColor: '#e7f3ff',
+        backgroundColor: '#ffebee',
     },
     itemDisabled: {
         opacity: 0.6,

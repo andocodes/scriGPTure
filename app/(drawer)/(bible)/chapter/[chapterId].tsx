@@ -7,6 +7,7 @@ import { useWindowDimensions } from 'react-native';
 
 import { Container } from "~/components/Container";
 import { useAppStore } from "~/store/store";
+import type { AppState } from "~/store/store";
 import * as db from "~/db/database";
 import * as api from "~/services/apiBible";
 import { type ApiBibleVerse } from "~/services/apiBible";
@@ -25,13 +26,18 @@ function extractVerseNumber(reference: string): string {
     return parts?.[1] ?? '?'; // Return last part after ':' or ' ? '
 }
 
+// Define base styles for RenderHTML
+const tagsStyles = {
+  p: { color: 'black', marginBottom: 8 }, // Style for paragraphs
+  // Add other tags if needed based on API content
+};
+
 export default function BibleChapterReaderScreen() {
   const { chapterId } = useLocalSearchParams<{ chapterId: string }>();
-  const { selectedTranslationId, setCurrentLocation, apiBibleApiKey } = useAppStore(state => ({
-      selectedTranslationId: state.selectedTranslationId,
-      setCurrentLocation: state.setCurrentLocation,
-      apiBibleApiKey: state.apiBibleApiKey, // Need API key for web fallback
-  }));
+  const selectedTranslationId = useAppStore((state: AppState) => state.selectedTranslationId);
+  const setCurrentLocation = useAppStore((state: AppState) => state.setCurrentLocation);
+  const apiBibleApiKey = useAppStore((state: AppState) => state.apiBibleApiKey);
+  const availableTranslations = useAppStore((state: AppState) => state.availableTranslations);
 
   const [verses, setVerses] = useState<Verse[]>([]);
   const [chapterReference, setChapterReference] = useState<string | null>(null);
@@ -95,10 +101,17 @@ export default function BibleChapterReaderScreen() {
           fetchedBookId = chapterInfo?.book_id ?? null;
 
           // Fetch verses for the chapter from DB
-          verseData = await db.all<Verse>(
-            "SELECT id, reference, content FROM verses WHERE translation_id = ? AND chapter_id = ? ORDER BY sort_order ASC",
+          // Select verse_number, not reference
+          const verseDbData = await db.all<{ id: string, verse_number: string, content: string }>(
+            "SELECT id, verse_number, content FROM verses WHERE translation_id = ? AND chapter_id = ? ORDER BY sort_order ASC",
             [currentTranslationId, chapterId],
           );
+          // Map DB data to Verse interface, constructing the reference
+          verseData = verseDbData.map(v => ({
+            id: v.id,
+            content: v.content,
+            reference: `${fetchedChapterRef}:${v.verse_number}` // Construct full reference
+          }));
         }
 
         setChapterReference(fetchedChapterRef);
@@ -120,9 +133,13 @@ export default function BibleChapterReaderScreen() {
     loadChapterData();
   }, [selectedTranslationId, chapterId, setCurrentLocation, apiBibleApiKey]);
 
+  // Find the abbreviation of the selected translation
+  const selectedTranslationAbbr = availableTranslations.find(t => t.id === selectedTranslationId)?.abbreviation ?? '';
+  const screenTitle = chapterReference ? `${chapterReference} (${selectedTranslationAbbr})` : `Loading... (${selectedTranslationAbbr})`;
+
   return (
     <Container>
-      <Stack.Screen options={{ title: chapterReference ?? "Loading..." }} />
+      <Stack.Screen options={{ title: screenTitle, headerBackVisible: true }} />
       <View className="flex-1 p-4">
         {isLoading && <Text>Loading verses...</Text>}
         {error && <Text className="text-red-500">Error: {error}</Text>}
@@ -133,22 +150,25 @@ export default function BibleChapterReaderScreen() {
           <FlashList
             data={verses}
             estimatedItemSize={50} // Adjust
-            renderItem={({ item }) => (
-              <View className="flex-row mb-2">
-                <Text className="text-sm font-bold w-8 pt-1">
-                  {extractVerseNumber(item.reference)} {/* Extract verse num */}
-                </Text>
-                {/* Render HTML content from verse */}
-                <View style={{ flex: 1 }}>
+            renderItem={({ item }) => {
+              console.log("Verse Content:", item.content); // Log verse content
+              return (
+                <View className="flex-row mb-2">
+                  <Text className="text-sm font-bold w-8 pt-1">
+                    {extractVerseNumber(item.reference)} {/* Extract verse num */}
+                  </Text>
+                  {/* Render HTML content from verse */}
+                  <View style={{ flex: 1 }}>
                      <RenderHTML
                         contentWidth={width - 64} // Adjust width based on padding/margins
                         source={{ html: item.content }}
-                        // TODO: Configure base styles for fonts, sizes etc.
-                        // tagsStyles={tagsStyles}
+                        baseStyle={{ color: 'black' }} // Keep base style
+                        tagsStyles={tagsStyles} // Add tag-specific styles
                     />
+                  </View>
                 </View>
-              </View>
-            )}
+              );
+            }}
             keyExtractor={(item) => item.id}
           />
         )}

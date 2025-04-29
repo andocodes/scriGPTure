@@ -1,6 +1,6 @@
 import { FlashList } from "@shopify/flash-list"
 import { Text, View, Platform } from "react-native"
-import { Link, Stack } from "expo-router"
+import { Link, Stack, useRouter } from "expo-router"
 import { useEffect, useState } from "react"
 
 import { Button } from "~/components/Button"
@@ -20,13 +20,20 @@ interface Book extends Pick<ApiBibleBook, 'id' | 'name' | 'abbreviation'> {
 }
 
 export default function BibleBooksScreen() {
+  const router = useRouter();
   // Select primitive values individually
   const selectedTranslationId = useAppStore((state: AppState) => state.selectedTranslationId);
   const apiBibleApiKey = useAppStore((state: AppState) => state.apiBibleApiKey);
+  const downloadedTranslationIds = useAppStore((state: AppState) => state.downloadedTranslationIds);
+  const availableTranslations = useAppStore((state: AppState) => state.availableTranslations);
 
   const [books, setBooks] = useState<Book[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Find the name of the selected translation
+  const selectedTranslation = availableTranslations.find(t => t.id === selectedTranslationId);
+  const translationDisplayName = selectedTranslation ? `${selectedTranslation.name} (${selectedTranslation.abbreviation})` : "No Translation Selected";
 
   useEffect(() => {
     const loadBooks = async () => {
@@ -87,16 +94,38 @@ export default function BibleBooksScreen() {
     loadBooks()
   }, [selectedTranslationId, apiBibleApiKey]) // Re-run if selection or key changes
 
+  // Check if the selected translation is downloaded (only relevant on native)
+  const isSelectedDownloaded = IS_WEB || (selectedTranslationId ? downloadedTranslationIds.includes(selectedTranslationId) : false);
+
   return (
     <Container>
       <Stack.Screen options={{ title: "Select Book" }} />
+      {/* Display current translation */}
+      <Text className="text-center text-sm text-gray-600 p-2 bg-gray-100">
+        Selected: {translationDisplayName}
+      </Text>
       <View className="flex-1 p-4">
         {isLoading && <Text>Loading books...</Text>}
         {error && <Text className="text-red-500">Error: {error}</Text>}
-        {!isLoading && !error && books.length === 0 && (
-          <Text>No books found. {IS_WEB ? 'Check connection or API key.' : 'Try downloading the translation first.'}</Text>
+        
+        {/* Case 1: Not loading, no error, but selected translation not downloaded on native */}
+        {!isLoading && !error && !isSelectedDownloaded && !IS_WEB && (
+            <View className="items-center justify-center flex-1">
+                <Text className="text-center mb-4">This translation is not downloaded.</Text>
+                <Button 
+                    title="Go to Settings to Download"
+                    onPress={() => router.push('/(drawer)/settings')} 
+                />
+            </View>
         )}
-        {!isLoading && !error && books.length > 0 && (
+
+        {/* Case 2: Not loading, no error, downloaded (or web), but no books found (e.g., API error) */}
+        {!isLoading && !error && isSelectedDownloaded && books.length === 0 && (
+          <Text>No books found. {IS_WEB ? 'Check connection or API key.' : 'Download might be incomplete or empty.'}</Text>
+        )}
+
+        {/* Case 3: Not loading, no error, downloaded (or web), books found -> Show List */}
+        {!isLoading && !error && isSelectedDownloaded && books.length > 0 && (
           <FlashList
             data={books}
             estimatedItemSize={80} // Adjust based on content
