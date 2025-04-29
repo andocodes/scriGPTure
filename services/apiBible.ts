@@ -211,7 +211,20 @@ export async function downloadAndStoreTranslation(
         setDownloadStatus(true, translationId, 0.01, null);
         const books = await fetchBooksForTranslation(translationId);
         if (!books || books.length === 0) throw new Error('No books found');
-        totalEstimatedChapters = books.length * 20; // Still an estimate
+        
+        // --- De-duplicate books based on ID ---
+        const uniqueBooks: ApiBibleBook[] = [];
+        const seenBookIds = new Set<string>();
+        for (const book of books) {
+            if (!seenBookIds.has(book.id)) {
+                uniqueBooks.push(book);
+                seenBookIds.add(book.id);
+            }
+        }
+        // --- End De-duplication ---
+        
+        // Use uniqueBooks for estimates and processing
+        totalEstimatedChapters = uniqueBooks.length * 20; 
 
         await db.withTransaction(async () => {
             console.log('Starting DB transaction for download...');
@@ -230,44 +243,75 @@ export async function downloadAndStoreTranslation(
                 [translationId, translation.abbreviation, translation.name, translation.language?.id ?? 'unknown']
             );
 
-            // 4. Batch Insert Books
-            console.log(`Batch inserting ${books.length} books...`);
-            if (books.length > 0) {
-                const bookValues: any[] = [];
-                const placeholders = books.map((book, i) => {
-                    bookValues.push(book.id, translationId, book.abbreviation, book.name, book.nameLong, i + 1);
-                    return "(?, ?, ?, ?, ?, ?)";
-                }).join(', ');
-                const bookSql = `INSERT INTO books (id, translation_id, abbreviation, name, name_long, sort_order) VALUES ${placeholders}`;
+            // 4. Batch Insert Unique Books
+            console.log(`Raw book count: ${books.length}`); // Log raw count
+            console.log(`Unique book count: ${uniqueBooks.length}`); // Log unique count
+            console.log(`Unique book IDs: ${JSON.stringify(uniqueBooks.map(b => b.id))}`); // Log unique IDs
+            console.log(`Batch inserting ${uniqueBooks.length} unique books...`);
+            
+            // --- Replace Batch Insert with Individual Inserts ---
+            for (let i = 0; i < uniqueBooks.length; i++) {
+                const book = uniqueBooks[i];
+                const sortOrder = i + 1;
+                const bookSql = `INSERT OR REPLACE INTO books (id, translation_id, abbreviation, name, name_long, sort_order) VALUES (?, ?, ?, ?, ?, ?)`;
+                const bookValues = [book.id, translationId, book.abbreviation, book.name, book.nameLong, sortOrder];
+                // console.log(`Inserting book: ${book.id}`); // Optional: log each insert
                 await db.run(bookSql, bookValues);
             }
-            booksProcessed = books.length;
-            setDownloadStatus(true, translationId, 0.1 + (booksProcessed / books.length) * 0.1, null);
+            // --- End Individual Inserts ---
 
-            // 5. Fetch and Batch Insert Chapters and Verses
+            booksProcessed = uniqueBooks.length; // Use uniqueBooks length
+            setDownloadStatus(true, translationId, 0.1 + (booksProcessed / uniqueBooks.length) * 0.1, null); // Use uniqueBooks length
+
+            // 5. Fetch and Batch Insert Chapters and Verses (using uniqueBooks)
             let overallChapterIndex = 0;
-            for (const book of books) {
+            for (const book of uniqueBooks) { // Iterate over uniqueBooks
                 console.log(`Processing book: ${book.id}`);
                 const chapters = await fetchChaptersForBook(translationId, book.id);
                 if (!chapters || chapters.length === 0) continue; // Skip book if no chapters
 
-                // Batch insert chapters for this book
-                const chapterValues: any[] = [];
-                const chapterPlaceholders = chapters.map((chapter, j) => {
-                    chapterValues.push(chapter.id, translationId, book.id, chapter.reference, j + 1);
-                    return "(?, ?, ?, ?, ?)";
-                }).join(', ');
-                const chapterSql = `INSERT INTO chapters (id, translation_id, book_id, reference, sort_order) VALUES ${chapterPlaceholders}`;
-                await db.run(chapterSql, chapterValues);
-
-                // Fetch and batch insert verses for each chapter
+                // --- De-duplicate chapters based on ID ---
+                const uniqueChapters: ApiBibleChapter[] = [];
+                const seenChapterIds = new Set<string>();
                 for (const chapter of chapters) {
+                    if (!seenChapterIds.has(chapter.id)) {
+                        uniqueChapters.push(chapter);
+                        seenChapterIds.add(chapter.id);
+                    }
+                }
+                // --- End De-duplication ---
+
+                // Batch insert unique chapters for this book
+                if (uniqueChapters.length > 0) {
+                    const chapterValues: any[] = [];
+                    const chapterPlaceholders = uniqueChapters.map((chapter, j) => { // Use uniqueChapters
+                        chapterValues.push(chapter.id, translationId, book.id, chapter.reference, j + 1);
+                        return "(?, ?, ?, ?, ?)";
+                    }).join(', ');
+                    // Use INSERT OR REPLACE for chapters
+                    const chapterSql = `INSERT OR REPLACE INTO chapters (id, translation_id, book_id, reference, sort_order) VALUES ${chapterPlaceholders}`;
+                    await db.run(chapterSql, chapterValues);
+                }
+
+                // Fetch and batch insert verses for each unique chapter
+                for (const chapter of uniqueChapters) { // Use uniqueChapters
                     overallChapterIndex++;
                     const verses = await fetchVersesForChapter(translationId, chapter.id);
                     if (!verses || verses.length === 0) continue; // Skip chapter if no verses
 
-                    // Batch insert verses in chunks
-                    const verseChunks = chunkArray(verses, VERSE_BATCH_SIZE);
+                    // --- De-duplicate verses based on ID ---
+                    const uniqueVerses: ApiBibleVerse[] = [];
+                    const seenVerseIds = new Set<string>();
+                    for (const verse of verses) {
+                        if (!seenVerseIds.has(verse.id)) {
+                            uniqueVerses.push(verse);
+                            seenVerseIds.add(verse.id);
+                        }
+                    }
+                    // --- End De-duplication ---
+
+                    // Batch insert unique verses in chunks
+                    const verseChunks = chunkArray(uniqueVerses, VERSE_BATCH_SIZE); // Use uniqueVerses
                     for (const chunk of verseChunks) {
                         const verseValues: any[] = [];
                         const versePlaceholders = chunk.map((verse, k) => {
@@ -277,7 +321,8 @@ export async function downloadAndStoreTranslation(
                             verseValues.push(verse.id, translationId, book.id, chapter.id, verseNum, verseContent, overallChapterIndex * 1000 + k + 1); // Use verseContent
                             return "(?, ?, ?, ?, ?, ?, ?)";
                         }).join(', ');
-                        const verseSql = `INSERT INTO verses (id, translation_id, book_id, chapter_id, verse_number, content, sort_order) VALUES ${versePlaceholders}`;
+                        // Use INSERT OR REPLACE for verses
+                        const verseSql = `INSERT OR REPLACE INTO verses (id, translation_id, book_id, chapter_id, verse_number, content, sort_order) VALUES ${versePlaceholders}`;
                         await db.run(verseSql, verseValues);
                     }
                     chaptersProcessed++;

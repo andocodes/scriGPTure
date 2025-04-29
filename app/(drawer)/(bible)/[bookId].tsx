@@ -90,8 +90,8 @@ export default function BibleChaptersScreen() {
         }
         setBookName(fetchedBookName);
         console.log('Raw chapterData:', JSON.stringify(chapterData)); // Log raw data
-        // Filter out potential book entry (assuming chapter refs contain a space)
-        const filteredChapters = chapterData.filter(c => c.reference.includes(' '));
+        // Filter out potential book entry (assuming chapter IDs contain '.')
+        const filteredChapters = chapterData.filter(c => c.id.includes('.')); // Use ID filter
         console.log('Filtered chapterData:', JSON.stringify(filteredChapters)); // Log filtered data
         setChapters(filteredChapters);
 

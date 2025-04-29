@@ -35,10 +35,10 @@ const HomeScreenLayout = () => (
     <Drawer.Screen
       name="(bible)"
       options={{
-        // headerTitle: "Bible", // Temporarily remove
+        headerTitle: "Bible",
         drawerLabel: "Bible",
         drawerIcon: ({ size, color }) => <Ionicons name="book-sharp" size={size} color={color} />,
-        // headerRight: () => <HeaderNewChatButton />, // Temporarily remove
+        headerRight: () => <HeaderNewChatButton />,
       }}
     />
     <Drawer.Screen
