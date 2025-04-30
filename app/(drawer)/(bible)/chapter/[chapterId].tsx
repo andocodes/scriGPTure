@@ -14,9 +14,16 @@ const IS_WEB = Platform.OS === 'web';
 
 export default function BibleVerseReaderScreen() {
   // Get params based on the new route structure: [bookId]/[chapterNumber]
-  const { bookId, chapterNumber: chapterNumberParam } = useLocalSearchParams<{ bookId: string, chapterNumber: string }>();
+  const { bookId, chapterNumber: chapterNumberParam, verseNumber: verseNumberParam } = useLocalSearchParams<{ 
+    bookId: string, 
+    chapterNumber: string,
+    verseNumber?: string 
+  }>();
   const navigation = useNavigation();
   const router = useRouter();
+  
+  // Reference to the FlashList to enable scrolling to specific verses
+  const flashListRef = React.useRef(null);
   
   // Zustand state and actions
   const selectedTranslationId = useAppStore((state) => state.selectedTranslationId); // abbr
@@ -188,6 +195,32 @@ export default function BibleVerseReaderScreen() {
 
   }, [selectedTranslationId, selectedTranslation, bookId, chapterNumberParam, setCurrentLocation, isSelectedDownloaded, isDbReady]);
 
+  // Effect to scroll to a specific verse if verseNumber is provided
+  useEffect(() => {
+    // Only try to scroll if we have verses loaded and a verse number
+    if (!isLoading && verses.length > 0 && verseNumberParam) {
+      const verseNum = parseInt(verseNumberParam, 10);
+      if (!isNaN(verseNum)) {
+        // Find the index of the verse in our verses array
+        const verseIndex = verses.findIndex(v => v.verse === verseNum);
+        if (verseIndex !== -1 && flashListRef.current) {
+          console.log(`[VerseScreen] Scrolling to verse ${verseNum} at index ${verseIndex}`);
+          // Scroll to the verse with a slight delay to ensure rendering is complete
+          setTimeout(() => {
+            if (flashListRef.current) {
+              // @ts-ignore - TypeScript doesn't know about scrollToIndex
+              flashListRef.current.scrollToIndex({ 
+                index: verseIndex,
+                animated: true,
+                viewOffset: 50 // Add some offset at the top
+              });
+            }
+          }, 300);
+        }
+      }
+    }
+  }, [verses, isLoading, verseNumberParam]);
+
   // Update header title dynamically
   const screenTitle = useMemo(() => 
       (bookName && chapterNumber !== null) 
@@ -222,6 +255,7 @@ export default function BibleVerseReaderScreen() {
         {/* Display verse list */} 
         {!isLoading && !error && isSelectedDownloaded && verses.length > 0 && (
           <FlashList
+            ref={flashListRef}
             data={verses}
             estimatedItemSize={50} 
             renderItem={({ item }) => { 

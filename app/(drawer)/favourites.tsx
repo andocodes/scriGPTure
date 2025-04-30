@@ -35,6 +35,7 @@ export default function FavouritesScreen() {
             chapterId: chapterId,
             bookId: item.book_id,
             chapterNumber: item.chapter,
+            verseNumber: item.verse, // Pass verse number to scroll to it
         };
         const pathname = `/(drawer)/(bible)/chapter/[chapterId]`;
         console.log(`[FavouritesScreen] Navigating to pathname: ${pathname} with params:`, params); // Log path and params
