@@ -103,7 +103,7 @@ export default function BibleVerseReaderScreen() {
     console.log(`[VerseScreen] Sending to chat: ${reference}`);
     // Navigate to chat screen, passing data as params
     router.push({
-        pathname: '/(drawer)/(chat)/index', // Target the chat screen directly
+        pathname: '/(drawer)/(chat)',
         params: {
             verseReference: reference,
             verseText: textToSend
@@ -231,19 +231,19 @@ export default function BibleVerseReaderScreen() {
               const menuActions: ContextMenuAction[] = [
                 {
                   title: isFavourited ? "Unfavourite" : "Favourite",
-                  systemIcon: isFavourited ? 'star.fill' : 'star', // SF Symbols (iOS)
-                  // destructive: isFavourited, // Optional: make unfavourite red
+                  systemIcon: isFavourited ? 'star.fill' : 'star',
                 },
                 {
                   title: "Send to Chat",
-                  systemIcon: 'paperplane', // SF Symbols (iOS)
+                  systemIcon: 'paperplane',
                 },
-                 {
-                   title: "Copy Verse",
-                   systemIcon: 'doc.on.doc', // SF Symbols (iOS)
-                 },
+                {
+                  title: "Copy Verse",
+                  systemIcon: 'doc.on.doc',
+                },
               ];
               
+              // Render the verse row with the context menu
               return (
                 <ContextMenuView
                   actions={menuActions}
@@ -256,26 +256,17 @@ export default function BibleVerseReaderScreen() {
                       case 1: // Send to Chat
                         handleSendToChat(item);
                         break;
-                       case 2: // Copy Verse
-                         // TODO: Implement Clipboard logic
-                         console.log("[VerseScreen] Copy action selected (not implemented)");
-                         // import { Clipboard } from 'react-native';
-                         // const reference = `${bookName || bookId} ${chapterNumber}:${item.verse} (${selectedTranslation?.abbr})`;
-                         // Clipboard.setString(`${reference}\n${item.text?.trim()}`);
-                         break;
+                      case 2: // Copy Verse
+                        // TODO: Implement Clipboard logic
+                        console.log("[VerseScreen] Copy action selected (not implemented)");
+                        break;
                     }
                   }}
-                  // style={styles.contextMenuWrapper} // Optional wrapper style
                 >
-                    {/* The actual verse row content */}
-                    <View style={styles.verseRow}>                  
-                      <Text style={styles.verseNumber}>
-                        {item.verse} 
-                      </Text>
-                      <Text style={styles.verseText}> 
-                        {item.text?.trim() || '[Verse text not available]'} 
-                      </Text>
-                    </View>
+                  <Pressable style={styles.verseRow}>
+                    <Text style={styles.verseNumber}>{item.verse}</Text>
+                    <Text style={styles.verseText}>{item.text?.trim() || '[Verse text not available]'}</Text>
+                  </Pressable>
                 </ContextMenuView>
               );
             }}
@@ -290,34 +281,31 @@ export default function BibleVerseReaderScreen() {
 
 // Update Styles
 const styles = StyleSheet.create({
-    container: { // Added container style for padding
+    container: {
       flex: 1,
       paddingHorizontal: 15,
       paddingTop: 10,
     },
-    // contextMenuWrapper: { // Optional: if needed
-    //   // Styles for the wrapper if needed
-    // },
     verseRow: {
       flexDirection: 'row',
-      marginBottom: 12, 
-      paddingVertical: 4, // Add some vertical padding inside the touch target
-      alignItems: 'flex-start', 
-      // Remove icon container style
+      paddingVertical: 8,
+      paddingHorizontal: 4,
+      marginBottom: 12,
+      alignItems: 'flex-start',
+      backgroundColor: 'transparent',
     },
     verseNumber: {
       fontSize: 13, 
       fontWeight: 'bold',
       width: 28, 
       textAlign: 'right',
-      marginRight: 8, // Increased space 
+      marginRight: 8,
       color: '#555',
-      paddingTop: 2, // Align with text top slightly better
+      paddingTop: 2,
     },
     verseText: {
       flex: 1, 
       fontSize: 17, 
-      lineHeight: 24, 
-      // Remove margin (no icon on the right anymore)
+      lineHeight: 24,
     },
 }); 
