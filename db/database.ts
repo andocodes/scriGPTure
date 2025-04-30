@@ -556,7 +556,7 @@ export async function deleteChatFromDb(chatId: string): Promise<boolean> {
 }
 
 // Get a preview of messages in each chat
-export async function getChatPreviewsFromDb(): Promise<Array<{ chatId: string; preview: string }>> {
+export async function getChatPreviewsFromDb(): Promise<Array<{ chatId: string; preview: string; isUserMessage: boolean }>> {
   if (IS_WEB || !mainDb) {
     console.warn("[Database Chat] Cannot get chat previews, no main DB connection.");
     return [];
@@ -566,20 +566,30 @@ export async function getChatPreviewsFromDb(): Promise<Array<{ chatId: string; p
     // Get the most recent message for each chat to use as preview
     const results = await mainDb.getAllAsync<{
       chat_id: string,
-      content: string
+      content: string,
+      is_user: number
     }>(
-      `SELECT chat_id, content FROM messages 
-       WHERE id IN (
-         SELECT MAX(id) FROM messages GROUP BY chat_id
-       )`
+      `SELECT m.chat_id, m.content, m.is_user FROM messages m
+       INNER JOIN (
+         SELECT chat_id, MAX(timestamp) as latest_timestamp
+         FROM messages
+         GROUP BY chat_id
+       ) latest ON m.chat_id = latest.chat_id AND m.timestamp = latest.latest_timestamp
+       ORDER BY m.timestamp DESC`
     );
     
-    const previews = results.map(row => ({
-      chatId: row.chat_id,
-      preview: row.content.length > 40 
-        ? `${row.content.substring(0, 40)}...` 
-        : row.content
-    }));
+    const previews = results.map(row => {
+      // Limit preview length if needed
+      const content = row.content.length > 100 
+        ? `${row.content.substring(0, 100)}...` 
+        : row.content;
+        
+      return {
+        chatId: row.chat_id,
+        preview: content,
+        isUserMessage: row.is_user === 1
+      };
+    });
     
     console.log(`[Database Chat] Retrieved ${previews.length} chat previews`);
     return previews;

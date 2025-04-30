@@ -11,6 +11,7 @@ import { useMessages } from "~/hooks/useMessages"
 import { getChatCompletionStream, OpenRouterMessage } from "~/services/openRouterService"
 import { SYSTEM_PROMPT, MISSING_API_KEY_MESSAGE, API_UNAVAILABLE_MESSAGE } from "~/config/prompts"
 import { useAppStore } from "~/store/store"
+import { saveMessageToDb } from "~/db/database"
 
 export default function ChatScreen() {
   const { 
@@ -48,8 +49,8 @@ export default function ChatScreen() {
       const chatIdParam = params.chatId;
       console.log(`[ChatScreen] initializeChat called with chatId: ${chatIdParam}, currentChatId: ${currentChatId}, previousChatIdRef: ${previousChatIdRef.current}, timestamp: ${params.ts}`);
       
-      // Skip if we're already on this chat
-      if (chatIdParam === previousChatIdRef.current && chatIdParam === currentChatId) {
+      // Skip if we're already on this chat and no timestamp update triggered refresh
+      if (chatIdParam === previousChatIdRef.current && chatIdParam === currentChatId && !params.ts) {
         console.log(`[ChatScreen] Already on chat ${chatIdParam}, skipping initialization`);
         return;
       }
@@ -61,8 +62,17 @@ export default function ChatScreen() {
         // Load existing chat history
         setIsHistoryLoading(true);
         try {
+          // First clear the messages array to avoid any stale data
+          setMessages([]);
+          
+          // Then load the chat history for the specified chat ID
           await loadChatHistory(chatIdParam);
           console.log(`[ChatScreen] Loaded chat history for ID: ${chatIdParam}`);
+          
+          // Double-check we loaded the correct chat ID
+          if (currentChatId !== chatIdParam) {
+            console.warn(`[ChatScreen] Chat ID mismatch: loaded ${currentChatId} but expected ${chatIdParam}`);
+          }
         } catch (error) {
           console.error(`[ChatScreen] Error loading chat ${chatIdParam}:`, error);
           Alert.alert("Error", "Failed to load chat history");
@@ -80,8 +90,8 @@ export default function ChatScreen() {
     };
 
     initializeChat();
-    // Include all dependencies used inside the effect
-  }, [params.chatId, params.ts, currentChatId, loadChatHistory, startNewChat, router]);
+    // Only depend on necessary params to avoid excessive re-renders
+  }, [params.chatId, params.ts]);
 
   // Update edited title when current title changes
   useEffect(() => {
@@ -201,11 +211,26 @@ export default function ChatScreen() {
       console.log(`[ChatScreen] Auto-generated title: ${generatedTitle}`);
     }
 
-    setMessages([...messages, newMessage])
-    setIsLoading(true)
+    // First update the messages in state
+    const updatedMessages = [...messages, newMessage];
+    setMessages(updatedMessages);
+    setIsLoading(true);
+
+    // Manual save of user message to ensure it's saved properly
+    if (currentChatId) {
+      try {
+        // Make sure we await this - it's critical user messages are saved
+        await saveMessageToDb(newMessage, currentChatId);
+        console.log(`[ChatScreen] Manually saved user message ${newMessage.id} to DB`);
+      } catch (error) {
+        console.error("[ChatScreen] Error manually saving user message:", error);
+      }
+    } else {
+      console.warn("[ChatScreen] No currentChatId available, user message not saved to DB");
+    }
 
     // Clear input after sending
-    setInputValue("")
+    setInputValue("");
 
     // For the API, we construct a context-rich prompt
     let contextText = "";
@@ -227,7 +252,7 @@ export default function ChatScreen() {
       const apiMessages: OpenRouterMessage[] = [
         { role: 'system', content: SYSTEM_PROMPT },
         // Convert previous messages to the API format
-        ...messages.map(msg => ({
+        ...updatedMessages.map(msg => ({
           role: msg.isUser ? 'user' as const : 'assistant' as const,
           content: msg.content
         })),
@@ -292,6 +317,34 @@ export default function ChatScreen() {
         resolve();
       });
       
+      // Explicitly save the completed AI message to the database
+      if (currentChatId) {
+        try {
+          // Use setMessages to get the current messages array and find our AI message
+          setMessages(currentMessages => {
+            // Find the AI message
+            const finalAIMessage = currentMessages.find(msg => msg.id === assistantMessageId);
+            
+            if (finalAIMessage && finalAIMessage.content) {
+              // Create a copy to avoid any state mutation issues
+              const completeAIMessage = {...finalAIMessage};
+              
+              // Save it directly to the database
+              console.log(`[ChatScreen] Saving AI message with content length: ${completeAIMessage.content.length}`);
+              saveMessageToDb(completeAIMessage, currentChatId)
+                .then(() => console.log(`[ChatScreen] Successfully saved completed AI message to DB, id: ${assistantMessageId}`))
+                .catch(err => console.error('[ChatScreen] Error saving final AI message:', err));
+            } else {
+              console.warn(`[ChatScreen] Could not find completed AI message with id: ${assistantMessageId}`);
+            }
+            
+            // Return unchanged messages (this is just using setMessages to access current state)
+            return currentMessages;
+          });
+        } catch (error) {
+          console.error('[ChatScreen] Error in final AI message save process:', error);
+        }
+      }
     } catch (error) {
       console.error('[ChatScreen] Error in API request:', error);
       

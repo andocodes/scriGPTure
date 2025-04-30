@@ -4,12 +4,14 @@ import { useRouter, useFocusEffect } from "expo-router"
 import { Container } from "~/components/Container"
 import { getChatHistoryList, useMessages } from "~/hooks/useMessages"
 import { deleteChatFromDb, getChatPreviewsFromDb } from "~/db/database"
+import Markdown from 'react-native-markdown-display'
 
 interface ChatHistoryItem {
   id: string
   timestamp: number
   title: string
   preview: string
+  isUserMessage: boolean
 }
 
 export default function ChatHistoryScreen() {
@@ -17,7 +19,7 @@ export default function ChatHistoryScreen() {
   const [isLoading, setIsLoading] = useState(true)
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null)
   const [editedTitle, setEditedTitle] = useState("")
-  const { updateChatTitle } = useMessages()
+  const { updateChatTitle, startNewChat } = useMessages()
   const router = useRouter()
 
   // Use useFocusEffect to reload history whenever screen comes into focus
@@ -44,15 +46,20 @@ export default function ChatHistoryScreen() {
       
       // Get message previews
       const previews = await getChatPreviewsFromDb()
+      console.log(`[ChatHistory] Fetched ${previews.length} message previews`)
       
       // Combine metadata with previews
       const historyWithPreview = historyList.map(item => {
         const previewItem = previews.find(p => p.chatId === item.id)
         return {
           ...item,
-          preview: previewItem?.preview || "Empty chat"
+          preview: previewItem?.preview || "Empty chat",
+          isUserMessage: previewItem?.isUserMessage || false
         }
       })
+      
+      // Sort by most recent first
+      historyWithPreview.sort((a, b) => b.timestamp - a.timestamp)
       
       setChatHistory(historyWithPreview)
       console.log(`[ChatHistory] Loaded ${historyWithPreview.length} chat previews`)
@@ -107,6 +114,23 @@ export default function ChatHistoryScreen() {
       setEditedTitle("")
     }
   }
+
+  const handleStartNewChat = () => {
+    // Create a new chat using the hook
+    const newChatId = startNewChat();
+    
+    // Navigate with timestamp to force remount
+    const timestamp = Date.now();
+    console.log(`[ChatHistory] Creating new chat: ${newChatId} with timestamp: ${timestamp}`);
+    
+    router.push({
+      pathname: "/(drawer)/(chat)",
+      params: {
+        chatId: newChatId,
+        ts: timestamp
+      }
+    });
+  };
 
   const navigateToChat = (chatId: string) => {
     console.log(`[ChatHistory] Navigating to chat with ID: ${chatId}`);
@@ -175,7 +199,12 @@ export default function ChatHistoryScreen() {
             </Pressable>
           </View>
         )}
-        <Text className="text-sm text-gray-700 mb-1">{item.preview}</Text>
+        <View className="mb-1">
+          <Text className="text-sm text-gray-700">
+            {item.isUserMessage ? 'You: ' : ''}
+            {item.preview}
+          </Text>
+        </View>
         <Text className="text-xs text-gray-500">{formatDate(item.timestamp)}</Text>
       </View>
       <Pressable
@@ -191,12 +220,6 @@ export default function ChatHistoryScreen() {
     <Container>
       <View className="flex-row justify-between items-center p-4 border-b border-gray-200">
         <Text className="text-xl font-bold">Chat History</Text>
-        <Pressable 
-          className="bg-red-500 px-4 py-2 rounded"
-          onPress={() => router.push("/chat")}
-        >
-          <Text className="text-white font-medium">New Chat</Text>
-        </Pressable>
       </View>
 
       {chatHistory.length === 0 && !isLoading ? (
@@ -206,7 +229,7 @@ export default function ChatHistoryScreen() {
           </Text>
           <Pressable 
             className="bg-red-500 px-4 py-2 rounded"
-            onPress={() => router.push("/chat")}
+            onPress={handleStartNewChat}
           >
             <Text className="text-white font-medium">Start Chat</Text>
           </Pressable>

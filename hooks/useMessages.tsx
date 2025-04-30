@@ -38,6 +38,7 @@ export function MessagesProvider({ children }: MessagesProviderProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [currentChatId, setCurrentChatId] = useState<string | null>(null)
   const [currentChatTitle, setCurrentChatTitle] = useState<string>(DEFAULT_CHAT_TITLE)
+  const [savedMessageIds, setSavedMessageIds] = useState<Set<string>>(new Set())
 
   // Save messages to database whenever they change
   useEffect(() => {
@@ -50,21 +51,69 @@ export function MessagesProvider({ children }: MessagesProviderProps) {
           // Find the last message that was added
           const latestMessage = messages[messages.length - 1]
           
+          // Skip if this message ID has already been saved
+          if (savedMessageIds.has(latestMessage.id)) {
+            // Just skip quietly to reduce log noise
+            return
+          }
+          
           // Save the message to the database
           await saveMessageToDb(latestMessage, currentChatId)
           
-          console.log(`[Messages] Saved message for chat ${currentChatId}, isUser: ${latestMessage.isUser}`)
+          // Add this message ID to our saved set to avoid duplicate saves
+          setSavedMessageIds(prev => new Set(prev).add(latestMessage.id))
+          
+          const messageType = latestMessage.isUser ? "USER" : "AI";
+          const previewContent = latestMessage.content.substring(0, 30) + (latestMessage.content.length > 30 ? '...' : '');
+          console.log(`[Messages] Auto-saved ${messageType} message for chat ${currentChatId}, id: ${latestMessage.id}, content: "${previewContent}"`)
         } catch (error) {
           console.error("[Messages] Error saving chat history:", error)
         }
       }
     }
 
-    // Only run effect when a new message is added
-    if (messages.length > 0) {
-      saveMessages()
+    // Run effect whenever a message is added or changed
+    saveMessages()
+  }, [messages, currentChatId, currentChatTitle, savedMessageIds])
+  
+  // Save ALL messages whenever messages array changes completely
+  // This helps ensure integrity when loading a chat
+  useEffect(() => {
+    const saveAllMessagesOnLoad = async () => {
+      if (currentChatId && messages.length > 0) {
+        try {
+          // Check if we need to save all messages (e.g., on chat load)
+          // by comparing with our savedMessageIds
+          const unsavedMessages = messages.filter(msg => !savedMessageIds.has(msg.id));
+          
+          if (unsavedMessages.length > 0) {
+            console.log(`[Messages] Found ${unsavedMessages.length} unsaved messages to save`);
+            
+            // Use our saveAllMessages function to save them
+            await saveAllMessages(currentChatId, unsavedMessages);
+            
+            // Add all these IDs to our saved set
+            const newSavedIds = new Set(savedMessageIds);
+            unsavedMessages.forEach(msg => newSavedIds.add(msg.id));
+            setSavedMessageIds(newSavedIds);
+          }
+        } catch (error) {
+          console.error("[Messages] Error in bulk message save:", error);
+        }
+      }
+    };
+    
+    // Call this function when messages array changes
+    saveAllMessagesOnLoad();
+  }, [currentChatId, messages.length]);
+
+  // Clear saved message IDs when changing chats
+  useEffect(() => {
+    if (currentChatId) {
+      // Reset saved IDs when switching to a new chat
+      setSavedMessageIds(new Set())
     }
-  }, [messages.length, currentChatId, currentChatTitle]) // Only depend on messages.length, not messages array
+  }, [currentChatId])
 
   // Save chat title when it changes
   useEffect(() => {
@@ -107,6 +156,15 @@ export function MessagesProvider({ children }: MessagesProviderProps) {
     try {
       console.log(`[Messages] Starting to load chat history for ${chatId}`);
       
+      // Reset message array to avoid mixing messages from different chats
+      setMessages([]);
+      
+      // Reset saved message IDs when loading a different chat
+      setSavedMessageIds(new Set());
+      
+      // Set the currentChatId first to ensure proper context for subsequent operations
+      setCurrentChatId(chatId);
+      
       // Load chat metadata
       const metadata = await getChatMetadataFromDb(chatId)
       let chatTitle = DEFAULT_CHAT_TITLE
@@ -128,22 +186,28 @@ export function MessagesProvider({ children }: MessagesProviderProps) {
       
       if (loadedMessages.length > 0) {
         console.log(`[Messages] Loaded ${loadedMessages.length} messages for chat ${chatId}`)
-        setMessages(loadedMessages)
-        setCurrentChatId(chatId)
         
-        // Ensure all messages are properly saved to database (data consistency check)
-        await saveAllMessages(chatId, loadedMessages)
+        // Update the savedMessageIds with all loaded message IDs
+        const messageIds = new Set(loadedMessages.map(msg => msg.id));
+        setSavedMessageIds(messageIds);
+        
+        // Set messages in state
+        setMessages(loadedMessages)
+        
+        // Log some sample message info
+        if (loadedMessages.length > 0) {
+          const lastMsg = loadedMessages[loadedMessages.length - 1];
+          console.log(`[Messages] Last message - isUser: ${lastMsg.isUser}, contentLength: ${lastMsg.content.length}`);
+        }
       } else {
         // Chat ID exists but no messages - set empty array
         setMessages([])
-        setCurrentChatId(chatId)
         console.log(`[Messages] No chat history found for ${chatId}, starting empty with title: ${chatTitle}`)
       }
     } catch (error) {
       console.error(`[Messages] Error loading chat history for ${chatId}:`, error)
       // Reset to empty state on error
       setMessages([])
-      setCurrentChatId(chatId)
       setCurrentChatTitle(DEFAULT_CHAT_TITLE)
     }
   }
@@ -171,12 +235,18 @@ export function MessagesProvider({ children }: MessagesProviderProps) {
     try {
       console.log(`[Messages] Saving all ${messagesToSave.length} messages for chat ${chatId}`);
       
-      // Ensure chat exists
-      await saveChatToDb(chatId, currentChatTitle);
+      // Ensure chat exists with proper title
+      const chatTitle = currentChatId === chatId ? currentChatTitle : DEFAULT_CHAT_TITLE;
+      await saveChatToDb(chatId, chatTitle);
       
-      // Save each message
+      // Save each message with proper error handling
       for (const message of messagesToSave) {
-        await saveMessageToDb(message, chatId);
+        try {
+          await saveMessageToDb(message, chatId);
+        } catch (msgError) {
+          console.error(`[Messages] Error saving individual message ${message.id}:`, msgError);
+          // Continue with next message instead of failing entire batch
+        }
       }
       
       console.log(`[Messages] Successfully saved all messages for chat ${chatId}`);
