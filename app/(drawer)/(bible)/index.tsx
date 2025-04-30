@@ -1,13 +1,12 @@
 import { FlashList } from "@shopify/flash-list"
 import { Text, View, Platform } from "react-native"
 import { Link, Stack, useRouter } from "expo-router"
-import { useEffect, useState, useMemo } from "react"
+import React, { useEffect, useState, useMemo } from "react"
 
 import { Button } from "~/components/Button"
 import { Container } from "~/components/Container"
 import { useAppStore } from "~/store/store"
 import { getBooks, type AppBook } from "~/db/database"
-import { type ScrollmapperTranslationInfo } from "~/config/translationMap"
 
 const IS_WEB = Platform.OS === 'web'
 
@@ -141,7 +140,10 @@ export default function BibleBooksScreen() {
                 <Text className="text-center mb-4 text-red-500">Error: {error}</Text>
                 <Button 
                     title="Go to Settings to Select/Download"
-                    onPress={() => router.push('/(drawer)/settings')} 
+                    onPress={() => router.push({
+                      pathname: '/(drawer)/(settings)/translations',
+                      params: { referrer: 'bible' }
+                    })} 
                 />
             </View>
         )}
@@ -157,7 +159,10 @@ export default function BibleBooksScreen() {
                 <Text className="text-center mb-4">This translation is not downloaded.</Text>
                 <Button 
                     title="Go to Settings to Download"
-                    onPress={() => router.push('/(drawer)/settings')} 
+                    onPress={() => router.push({
+                      pathname: '/(drawer)/(settings)/translations',
+                      params: { referrer: 'bible' }
+                    })} 
                 />
             </View>
         )}

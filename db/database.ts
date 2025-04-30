@@ -555,7 +555,7 @@ export async function deleteChatFromDb(chatId: string): Promise<boolean> {
   }
 }
 
-// Get a preview of the first user message in each chat
+// Get a preview of messages in each chat
 export async function getChatPreviewsFromDb(): Promise<Array<{ chatId: string; preview: string }>> {
   if (IS_WEB || !mainDb) {
     console.warn("[Database Chat] Cannot get chat previews, no main DB connection.");
@@ -563,17 +563,15 @@ export async function getChatPreviewsFromDb(): Promise<Array<{ chatId: string; p
   }
   
   try {
-    // Modified query to find ANY message for chat preview if no user message exists
+    // Get the most recent message for each chat to use as preview
     const results = await mainDb.getAllAsync<{
       chat_id: string,
-      content: string,
-      is_user: number
+      content: string
     }>(
-      `SELECT chat_id, content, is_user FROM messages 
+      `SELECT chat_id, content FROM messages 
        WHERE id IN (
-         SELECT MIN(id) FROM messages GROUP BY chat_id
-       )
-       ORDER BY is_user DESC` // Prioritize user messages
+         SELECT MAX(id) FROM messages GROUP BY chat_id
+       )`
     );
     
     const previews = results.map(row => ({

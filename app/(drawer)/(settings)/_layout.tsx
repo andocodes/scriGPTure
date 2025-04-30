@@ -40,7 +40,10 @@ export default function SettingsLayout() {
           headerTitle: "Translations",
           headerLeft: () => (
             <TouchableOpacity 
-              onPress={() => router.back()}
+              onPress={() => {
+                // Simplified navigation - just go back
+                router.back();
+              }}
               style={{ marginLeft: 10 }}
             >
               <Ionicons name="arrow-back" size={24} color="#f44336" />

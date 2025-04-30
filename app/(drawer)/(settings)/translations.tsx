@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { View, Text, SectionList, Pressable, StyleSheet, Platform, Alert, TextInput, TouchableOpacity } from 'react-native';
-import { Stack } from 'expo-router';
+import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Container } from '~/components/Container';
@@ -17,6 +17,10 @@ interface DisplayTranslation extends ScrollmapperTranslationInfo {
 }
 
 export default function TranslationsScreen() {
+    const router = useRouter();
+    const params = useLocalSearchParams<{ referrer?: string }>();
+    const referrer = params.referrer;
+
     // Get state from Zustand store
     const availableTranslations = useAppStore((state) => state.availableTranslations);
     const selectedTranslationId = useAppStore((state) => state.selectedTranslationId);
@@ -73,6 +77,15 @@ export default function TranslationsScreen() {
         
         return result;
     }, [filteredTranslations, searchTerm]);
+
+    // Handle back navigation based on referrer
+    const handleBackNavigation = () => {
+        if (referrer === 'bible') {
+            router.push('/(drawer)/(bible)');
+        } else {
+            router.back();
+        }
+    };
 
     // --- Event Handlers ---
     const handleSelectItem = (item: DisplayTranslation) => {
@@ -198,19 +211,19 @@ export default function TranslationsScreen() {
         <Container>
             <View style={styles.container}>
                 <View style={styles.searchContainer}>
-                    <Ionicons name="search" size={20} color="#999" style={styles.searchIcon} />
+                    <Ionicons name="search" size={20} color="#777" style={styles.searchIcon} />
                     <TextInput
                         style={styles.searchInput}
-                        placeholder="Search by name, language, or abbreviation"
+                        placeholder="Search translations..."
                         value={searchTerm}
                         onChangeText={setSearchTerm}
-                        placeholderTextColor="#999"
+                        clearButtonMode="while-editing"
                     />
-                    {searchTerm.length > 0 && (
-                        <TouchableOpacity onPress={() => setSearchTerm('')}>
-                            <Ionicons name="close-circle" size={20} color="#999" />
-                        </TouchableOpacity>
-                    )}
+                    {searchTerm ? (
+                        <Pressable onPress={() => setSearchTerm('')} style={styles.clearButton}>
+                            <Ionicons name="close-circle" size={18} color="#777" />
+                        </Pressable>
+                    ) : null}
                 </View>
                 
                 {downloadError && !isDownloading && (
@@ -385,5 +398,8 @@ const styles = StyleSheet.create({
         marginTop: 40,
         color: '#666',
         fontSize: 16,
+    },
+    clearButton: {
+        padding: 8,
     },
 }); 

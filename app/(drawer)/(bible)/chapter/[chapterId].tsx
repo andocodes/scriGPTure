@@ -1,6 +1,6 @@
 import { FlashList } from "@shopify/flash-list";
 import { Text, View, Platform, StyleSheet, Pressable, Alert, Clipboard } from "react-native";
-import { Stack, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
+import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { useEffect, useState, useMemo } from "react";
 import React from 'react';
 import ContextMenuView, { type ContextMenuAction } from 'react-native-context-menu-view';
@@ -8,8 +8,6 @@ import ContextMenuView, { type ContextMenuAction } from 'react-native-context-me
 import { Container } from "~/components/Container";
 import { useAppStore } from "~/store/store";
 import { getVerses, getBooks, type Verse, type AppBook, type FavouriteVerse } from "~/db/database";
-import { type ScrollmapperTranslationInfo } from "~/config/translationMap";
-
 const IS_WEB = Platform.OS === 'web';
 
 export default function BibleVerseReaderScreen() {
