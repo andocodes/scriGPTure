@@ -50,8 +50,6 @@ An AI-powered Bible study companion mobile application that combines Bible readi
 2. Install dependencies:
    ```
    npm install
-   # or
-   yarn install
    ```
 
 3. Configure API keys:
