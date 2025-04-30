@@ -200,10 +200,27 @@ export default function ChatHistoryScreen() {
           </View>
         )}
         <View className="mb-1">
-          <Text className="text-sm text-gray-700">
-            {item.isUserMessage ? 'You: ' : ''}
-            {item.preview}
-          </Text>
+          {/* Add user message prefix if needed */}
+          {item.isUserMessage && (
+            <Text className="text-sm font-medium text-gray-700">You: </Text>
+          )}
+          
+          {/* Use Markdown for preview text */}
+          <View className="flex-row">
+            <View style={{ flex: 1 }}>
+              <Markdown style={{
+                body: { fontSize: 14, color: '#4a5568' },
+                paragraph: { marginTop: 0, marginBottom: 0 },
+                heading1: { fontSize: 16, marginTop: 0, marginBottom: 0 },
+                heading2: { fontSize: 15, marginTop: 0, marginBottom: 0 },
+                bullet_list: { marginTop: 0, marginBottom: 0 },
+                ordered_list: { marginTop: 0, marginBottom: 0 },
+                code_block: { fontSize: 12 }
+              }}>
+                {item.preview}
+              </Markdown>
+            </View>
+          </View>
         </View>
         <Text className="text-xs text-gray-500">{formatDate(item.timestamp)}</Text>
       </View>

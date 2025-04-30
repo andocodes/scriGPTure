@@ -617,9 +617,11 @@ export async function getChatPreviewsFromDb(): Promise<Array<{ chatId: string; p
     );
     
     const previews = results.map(row => {
-      // Limit preview length if needed
-      const content = row.content.length > 100 
-        ? `${row.content.substring(0, 100)}...` 
+      // Just take the content as is - without trying to strip markdown
+      // Limit to a reasonable preview length
+      const maxPreviewLength = 150;
+      const content = row.content.length > maxPreviewLength 
+        ? `${row.content.substring(0, maxPreviewLength)}...` 
         : row.content;
         
       return {
