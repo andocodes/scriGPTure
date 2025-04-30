@@ -398,7 +398,7 @@ const createAppState: StateCreator<AppState> = (set, get) => ({
 });
 
 // Create the Zustand store by invoking the result of create<AppState>()
-export const useAppStore = create<AppState>()(createAppState);
+export const useAppStore = create<AppState>(createAppState);
 
 // Export initializeStore separately if called from RootLayout
 // export const initializeStore = useAppStore.getState().initializeStore; 
