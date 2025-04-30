@@ -1,18 +1,15 @@
 import React, { createContext, ReactNode, useContext, useState, useEffect } from "react"
-import AsyncStorage from "@react-native-async-storage/async-storage"
-
-export interface Message {
-  id: string
-  content: string
-  isUser: boolean
-  timestamp: string
-  context?: {
-    verses: Array<{
-      reference: string
-      text: string
-    }>
-  }
-}
+import { 
+  Message, 
+  ChatMetadata, 
+  saveChatToDb, 
+  updateChatTitleInDb, 
+  saveMessageToDb, 
+  getChatMessagesFromDb, 
+  getChatMetadataFromDb, 
+  getAllChatsFromDb, 
+  deleteChatFromDb 
+} from "~/db/database"
 
 interface MessagesContextType {
   messages: Message[]
@@ -22,6 +19,10 @@ interface MessagesContextType {
   setCurrentChatId: (chatId: string | null) => void
   loadChatHistory: (chatId: string) => Promise<void>
   startNewChat: () => string
+  updateChatTitle: (chatId: string, title: string) => Promise<void>
+  currentChatTitle: string
+  setCurrentChatTitle: React.Dispatch<React.SetStateAction<string>>
+  saveAllMessages: (chatId: string, messages: Message[]) => Promise<void>
 }
 
 const MessagesContext = createContext<MessagesContextType | undefined>(undefined)
@@ -30,31 +31,73 @@ interface MessagesProviderProps {
   children: ReactNode
 }
 
-// Key prefix for storing chat history
-const CHAT_HISTORY_PREFIX = "chatHistory_"
+// Default chat title
+const DEFAULT_CHAT_TITLE = "New Chat"
 
 export function MessagesProvider({ children }: MessagesProviderProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [currentChatId, setCurrentChatId] = useState<string | null>(null)
+  const [currentChatTitle, setCurrentChatTitle] = useState<string>(DEFAULT_CHAT_TITLE)
 
-  // Save messages to AsyncStorage whenever they change
+  // Save messages to database whenever they change
   useEffect(() => {
     const saveMessages = async () => {
       if (currentChatId && messages.length > 0) {
         try {
-          await AsyncStorage.setItem(
-            `${CHAT_HISTORY_PREFIX}${currentChatId}`,
-            JSON.stringify(messages)
-          )
-          console.log(`[Messages] Saved ${messages.length} messages for chat ${currentChatId}`)
+          // Ensure chat exists in database
+          await saveChatToDb(currentChatId, currentChatTitle)
+          
+          // Find the last message that was added
+          const latestMessage = messages[messages.length - 1]
+          
+          // Save the message to the database
+          await saveMessageToDb(latestMessage, currentChatId)
+          
+          console.log(`[Messages] Saved message for chat ${currentChatId}, isUser: ${latestMessage.isUser}`)
         } catch (error) {
           console.error("[Messages] Error saving chat history:", error)
         }
       }
     }
 
-    saveMessages()
-  }, [messages, currentChatId])
+    // Only run effect when a new message is added
+    if (messages.length > 0) {
+      saveMessages()
+    }
+  }, [messages.length, currentChatId, currentChatTitle]) // Only depend on messages.length, not messages array
+
+  // Save chat title when it changes
+  useEffect(() => {
+    const saveChatTitle = async () => {
+      if (currentChatId) {
+        try {
+          await updateChatTitleInDb(currentChatId, currentChatTitle)
+          console.log(`[Messages] Updated title for chat ${currentChatId} to: ${currentChatTitle}`)
+        } catch (error) {
+          console.error(`[Messages] Error updating chat title:`, error)
+        }
+      }
+    }
+    
+    if (currentChatId) {
+      saveChatTitle()
+    }
+  }, [currentChatTitle, currentChatId])
+
+  const updateChatTitle = async (chatId: string, title: string) => {
+    try {
+      // Update state if this is the current chat
+      if (chatId === currentChatId) {
+        setCurrentChatTitle(title)
+      }
+      
+      // Update in database
+      await updateChatTitleInDb(chatId, title)
+      console.log(`[Messages] Updated title for chat ${chatId} to: ${title}`)
+    } catch (error) {
+      console.error(`[Messages] Error updating chat title for ${chatId}:`, error)
+    }
+  }
 
   const clearMessages = () => {
     setMessages([])
@@ -62,22 +105,46 @@ export function MessagesProvider({ children }: MessagesProviderProps) {
 
   const loadChatHistory = async (chatId: string) => {
     try {
-      const storedMessages = await AsyncStorage.getItem(`${CHAT_HISTORY_PREFIX}${chatId}`)
-      if (storedMessages) {
-        setMessages(JSON.parse(storedMessages))
+      console.log(`[Messages] Starting to load chat history for ${chatId}`);
+      
+      // Load chat metadata
+      const metadata = await getChatMetadataFromDb(chatId)
+      let chatTitle = DEFAULT_CHAT_TITLE
+      
+      if (metadata) {
+        chatTitle = metadata.title
+        console.log(`[Messages] Loaded metadata for ${chatId}, title: ${chatTitle}`)
+      } else {
+        // Create metadata if it doesn't exist
+        await saveChatToDb(chatId, DEFAULT_CHAT_TITLE)
+        console.log(`[Messages] Created new metadata for ${chatId} with default title`)
+      }
+      
+      // Set current chat title
+      setCurrentChatTitle(chatTitle)
+      
+      // Load messages
+      const loadedMessages = await getChatMessagesFromDb(chatId)
+      
+      if (loadedMessages.length > 0) {
+        console.log(`[Messages] Loaded ${loadedMessages.length} messages for chat ${chatId}`)
+        setMessages(loadedMessages)
         setCurrentChatId(chatId)
-        console.log(`[Messages] Loaded chat history for ${chatId}`)
+        
+        // Ensure all messages are properly saved to database (data consistency check)
+        await saveAllMessages(chatId, loadedMessages)
       } else {
         // Chat ID exists but no messages - set empty array
         setMessages([])
         setCurrentChatId(chatId)
-        console.log(`[Messages] No chat history found for ${chatId}, starting empty`)
+        console.log(`[Messages] No chat history found for ${chatId}, starting empty with title: ${chatTitle}`)
       }
     } catch (error) {
       console.error(`[Messages] Error loading chat history for ${chatId}:`, error)
       // Reset to empty state on error
       setMessages([])
       setCurrentChatId(chatId)
+      setCurrentChatTitle(DEFAULT_CHAT_TITLE)
     }
   }
 
@@ -87,8 +154,35 @@ export function MessagesProvider({ children }: MessagesProviderProps) {
     // Reset messages and set the new chat ID
     setMessages([])
     setCurrentChatId(newChatId)
+    setCurrentChatTitle(DEFAULT_CHAT_TITLE)
+    
+    // Create the chat in the database
+    saveChatToDb(newChatId, DEFAULT_CHAT_TITLE)
+      .catch(error => console.error(`[Messages] Error creating new chat:`, error))
+    
     console.log(`[Messages] Started new chat with ID: ${newChatId}`)
     return newChatId
+  }
+
+  // Helper function to manually save all messages for a chat - useful to ensure data consistency
+  const saveAllMessages = async (chatId: string, messagesToSave: Message[]) => {
+    if (!chatId || messagesToSave.length === 0) return;
+    
+    try {
+      console.log(`[Messages] Saving all ${messagesToSave.length} messages for chat ${chatId}`);
+      
+      // Ensure chat exists
+      await saveChatToDb(chatId, currentChatTitle);
+      
+      // Save each message
+      for (const message of messagesToSave) {
+        await saveMessageToDb(message, chatId);
+      }
+      
+      console.log(`[Messages] Successfully saved all messages for chat ${chatId}`);
+    } catch (error) {
+      console.error(`[Messages] Error saving all messages for chat ${chatId}:`, error);
+    }
   }
 
   return (
@@ -101,6 +195,10 @@ export function MessagesProvider({ children }: MessagesProviderProps) {
         setCurrentChatId,
         loadChatHistory,
         startNewChat,
+        updateChatTitle,
+        currentChatTitle,
+        setCurrentChatTitle,
+        saveAllMessages,
       }}
     >
       {children}
@@ -116,21 +214,16 @@ export function useMessages() {
   return context
 }
 
-// Helper function to get all stored chat IDs
-export async function getChatHistoryList(): Promise<Array<{ id: string; timestamp: number }>> {
+// Get all chats with their metadata
+export async function getChatHistoryList(): Promise<Array<{ id: string; timestamp: number; title: string }>> {
   try {
-    const keys = await AsyncStorage.getAllKeys()
-    const chatKeys = keys.filter((key) => key.startsWith(CHAT_HISTORY_PREFIX))
-
-    // Extract chat IDs and sort by timestamp (newest first)
-    return chatKeys
-      .map((key) => {
-        const chatId = key.replace(CHAT_HISTORY_PREFIX, "")
-        // Extract timestamp from chat ID (format: chat-1234567890)
-        const timestamp = parseInt(chatId.split("-")[1], 10)
-        return { id: chatId, timestamp }
-      })
-      .sort((a, b) => b.timestamp - a.timestamp)
+    const chats = await getAllChatsFromDb()
+    
+    return chats.map(chat => ({
+      id: chat.id,
+      timestamp: chat.updatedAt,
+      title: chat.title
+    }))
   } catch (error) {
     console.error("[Messages] Error getting chat history list:", error)
     return []

@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from "react"
-import { KeyboardAvoidingView, Platform, ScrollView, View, Alert } from "react-native"
+import { KeyboardAvoidingView, Platform, ScrollView, View, Alert, ActivityIndicator, Text, Pressable, TextInput } from "react-native"
 import { useLocalSearchParams, useRouter } from "expo-router"
 import React from 'react'
 import { Container } from "~/components/Container"
@@ -16,43 +16,86 @@ export default function ChatScreen() {
   const { 
     messages, 
     setMessages, 
-    currentChatId, 
+    currentChatId,
+    currentChatTitle,
+    setCurrentChatTitle,
+    updateChatTitle, 
     loadChatHistory, 
     startNewChat 
   } = useMessages()
   const [isLoading, setIsLoading] = useState(false)
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false)
+  const [isEditingTitle, setIsEditingTitle] = useState(false)
+  const [editedTitle, setEditedTitle] = useState("")
   const scrollViewRef = useRef<ScrollView>(null)
   const [inputValue, setInputValue] = useState("")
   const [contextVerses, setContextVerses] = useState<VerseContextItem[]>([])
   const openRouterApiKey = useAppStore((state) => state.openRouterApiKey)
   const abortControllerRef = useRef<AbortController | null>(null)
   const router = useRouter()
+  const previousChatIdRef = useRef<string | null>(null)
 
   const params = useLocalSearchParams<{ 
     verseReference?: string; 
     verseText?: string;
     chatId?: string;
+    ts?: string; // Timestamp for forcing remount
   }>()
 
   // Initialize chat based on chatId parameter or create a new chat
   useEffect(() => {
     const initializeChat = async () => {
-      if (params.chatId) {
+      const chatIdParam = params.chatId;
+      console.log(`[ChatScreen] initializeChat called with chatId: ${chatIdParam}, currentChatId: ${currentChatId}, previousChatIdRef: ${previousChatIdRef.current}, timestamp: ${params.ts}`);
+      
+      // Skip if we're already on this chat
+      if (chatIdParam === previousChatIdRef.current && chatIdParam === currentChatId) {
+        console.log(`[ChatScreen] Already on chat ${chatIdParam}, skipping initialization`);
+        return;
+      }
+      
+      // Update previous chat id reference
+      previousChatIdRef.current = chatIdParam ?? null;
+      
+      if (chatIdParam) {
         // Load existing chat history
-        await loadChatHistory(params.chatId)
-        console.log(`[ChatScreen] Loaded chat history for ID: ${params.chatId}`)
+        setIsHistoryLoading(true);
+        try {
+          await loadChatHistory(chatIdParam);
+          console.log(`[ChatScreen] Loaded chat history for ID: ${chatIdParam}`);
+        } catch (error) {
+          console.error(`[ChatScreen] Error loading chat ${chatIdParam}:`, error);
+          Alert.alert("Error", "Failed to load chat history");
+        } finally {
+          setIsHistoryLoading(false);
+        }
       } else if (!currentChatId) {
         // Start a new chat if no chatId is provided and no current chat is active
-        const newChatId = startNewChat()
-        console.log(`[ChatScreen] Started new chat with ID: ${newChatId}`)
+        const newChatId = startNewChat();
+        console.log(`[ChatScreen] Started new chat with ID: ${newChatId}`);
         
         // Update URL with the new chat ID (for bookmark/share capability)
-        router.setParams({ chatId: newChatId })
+        router.setParams({ chatId: newChatId });
       }
-    }
+    };
 
-    initializeChat()
-  }, [params.chatId, currentChatId, loadChatHistory, startNewChat, router])
+    initializeChat();
+    // Include all dependencies used inside the effect
+  }, [params.chatId, params.ts, currentChatId, loadChatHistory, startNewChat, router]);
+
+  // Update edited title when current title changes
+  useEffect(() => {
+    setEditedTitle(currentChatTitle);
+  }, [currentChatTitle]);
+
+  // Scroll to bottom when messages change or loading state changes
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 100); // Small delay to ensure content is rendered
+    
+    return () => clearTimeout(timer);
+  }, [messages, isLoading, isHistoryLoading]);
 
   useEffect(() => {
     if (params.verseReference && params.verseText) {
@@ -82,6 +125,32 @@ export default function ChatScreen() {
       }
     };
   }, []);
+
+  const handleStartTitleEdit = () => {
+    setIsEditingTitle(true);
+    setEditedTitle(currentChatTitle);
+  };
+
+  const handleSaveTitle = async () => {
+    // Don't save empty titles
+    if (editedTitle.trim() === "") {
+      setEditedTitle("New Chat");
+    }
+
+    if (currentChatId) {
+      try {
+        await updateChatTitle(currentChatId, editedTitle);
+        console.log(`[ChatScreen] Updated title for chat ${currentChatId} to: ${editedTitle}`);
+      } catch (error) {
+        console.error(`[ChatScreen] Error updating title:`, error);
+      }
+    } else {
+      // Just update state if no chat ID (should not happen)
+      setCurrentChatTitle(editedTitle);
+    }
+    
+    setIsEditingTitle(false);
+  };
 
   const handleRemoveVerse = (id: string) => {
     console.log(`[ChatScreen] Removing verse with id: ${id}`);
@@ -118,6 +187,18 @@ export default function ChatScreen() {
       isUser: true,
       timestamp: new Date().toISOString(),
       context: messageContext,
+    }
+
+    // Check if this is the first message and generate a title
+    if (messages.length === 0 && currentChatTitle === "New Chat") {
+      // Generate a title from the user message
+      const generatedTitle = content.length > 30
+        ? `${content.substring(0, 30)}...`
+        : content;
+      
+      // Update chat title
+      setCurrentChatTitle(generatedTitle);
+      console.log(`[ChatScreen] Auto-generated title: ${generatedTitle}`);
     }
 
     setMessages([...messages, newMessage])
@@ -251,30 +332,74 @@ export default function ChatScreen() {
 
   return (
     <Container>
+      <View className="flex-row justify-between items-center p-4 border-b border-gray-200">
+        {isEditingTitle ? (
+          <View className="flex-1 flex-row">
+            <TextInput
+              className="flex-1 border border-gray-300 rounded px-2 py-1 mr-2"
+              value={editedTitle}
+              onChangeText={setEditedTitle}
+              autoFocus
+              onBlur={handleSaveTitle}
+              onSubmitEditing={handleSaveTitle}
+              style={{ minWidth: 50 }} // Ensure minimum width to prevent NaN layout issues
+            />
+            <Pressable
+              className="bg-green-500 px-3 py-1 rounded"
+              onPress={handleSaveTitle}
+            >
+              <Text className="text-white font-medium">Save</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Pressable 
+            className="flex-1 flex-row items-center" 
+            onPress={handleStartTitleEdit}
+          >
+            <Text className="text-xl font-bold mr-2" numberOfLines={1} ellipsizeMode="tail">
+              {currentChatTitle}
+            </Text>
+            <Text className="text-xs text-gray-500">(tap to edit)</Text>
+          </Pressable>
+        )}
+      </View>
+      
       <KeyboardAvoidingView
         className="flex-1"
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={Platform.OS === "ios" ? 100 : 0}
       >
-        <ScrollView
-          ref={scrollViewRef}
-          className="flex-1 px-4"
-          contentContainerStyle={{ paddingVertical: 16 }}
-          onContentSizeChange={() => {
-            scrollViewRef.current?.scrollToEnd({ animated: true })
-          }}
-        >
-          {messages.map((message) => (
-            <Message
-              key={message.id}
-              content={message.content}
-              isUser={message.isUser}
-              timestamp={new Date(message.timestamp)}
-              context={message.context}
-            />
-          ))}
-          {isLoading && <LoadingMessage />}
-        </ScrollView>
+        {isHistoryLoading ? (
+          <View className="flex-1 justify-center items-center">
+            <ActivityIndicator size="large" color="#e74c3c" />
+          </View>
+        ) : (
+          <ScrollView
+            ref={scrollViewRef}
+            className="flex-1 px-4"
+            contentContainerStyle={{ paddingVertical: 16 }}
+            onContentSizeChange={() => {
+              scrollViewRef.current?.scrollToEnd({ animated: true })
+            }}
+          >
+            {messages.length > 0 ? (
+              messages.map((message) => (
+                <Message
+                  key={message.id}
+                  content={message.content}
+                  isUser={message.isUser}
+                  timestamp={new Date(message.timestamp)}
+                  context={message.context}
+                />
+              ))
+            ) : (
+              <View className="flex-1 justify-center items-center py-10">
+                <Text className="text-gray-400">Start a new conversation...</Text>
+              </View>
+            )}
+            {isLoading && <LoadingMessage />}
+          </ScrollView>
+        )}
 
         <VerseContext 
           verses={contextVerses}

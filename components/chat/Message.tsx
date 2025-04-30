@@ -1,6 +1,7 @@
 import React, { useState } from "react"
-import { Pressable, StyleSheet, Text, View } from "react-native"
+import { Pressable, StyleSheet, Text, View, TextStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
+import Markdown from 'react-native-markdown-display'
 
 interface MessageProps {
   content: string
@@ -19,6 +20,67 @@ export function Message({ content, isUser, timestamp, context }: MessageProps) {
   
   // Format the timestamp to display only hours and minutes
   const time = timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+
+  // Define markdown styles based on whether this is a user message or bot message
+  const markdownStyles: Record<string, TextStyle> = {
+    body: {
+      color: isUser ? '#fff' : '#333',
+      fontSize: 16,
+      lineHeight: 22,
+    },
+    heading1: {
+      color: isUser ? '#fff' : '#333',
+      fontSize: 20,
+      marginTop: 8,
+      marginBottom: 4,
+    },
+    heading2: {
+      color: isUser ? '#fff' : '#333',
+      fontSize: 18,
+      marginTop: 8,
+      marginBottom: 4,
+    },
+    heading3: {
+      color: isUser ? '#fff' : '#333',
+      fontSize: 17,
+      marginTop: 8,
+      marginBottom: 4,
+    },
+    link: {
+      color: isUser ? '#f8d2ce' : '#2980b9',
+      textDecorationLine: 'underline' as TextStyle['textDecorationLine'],
+    },
+    blockquote: {
+      backgroundColor: isUser ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
+      borderLeftColor: isUser ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.2)',
+      borderLeftWidth: 4,
+      paddingLeft: 8,
+      paddingVertical: 4,
+      marginVertical: 8,
+    },
+    strong: {
+      fontWeight: 'bold' as TextStyle['fontWeight'],
+    },
+    em: {
+      fontStyle: 'italic' as TextStyle['fontStyle'],
+    },
+    code_inline: {
+      backgroundColor: isUser ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.1)',
+      paddingHorizontal: 4,
+      paddingVertical: 2,
+      borderRadius: 3,
+      color: isUser ? '#fff' : '#333',
+      fontFamily: 'Courier',
+    },
+    code_block: {
+      backgroundColor: isUser ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.05)',
+      padding: 8,
+      borderRadius: 5,
+      marginVertical: 8,
+      color: isUser ? '#fff' : '#333',
+      fontFamily: 'Courier',
+    }
+  };
 
   return (
     <View style={[styles.container, isUser ? styles.userContainer : styles.botContainer]}>
@@ -54,7 +116,16 @@ export function Message({ content, isUser, timestamp, context }: MessageProps) {
         </View>
       )}
       
-      <Text style={[styles.text, isUser ? styles.userText : styles.botText]}>{content}</Text>
+      {isUser ? (
+        // Keep plain text for user messages
+        <Text style={[styles.text, styles.userText]}>{content}</Text>
+      ) : (
+        // Use markdown for bot responses
+        <Markdown style={markdownStyles}>
+          {content}
+        </Markdown>
+      )}
+      
       <Text style={[styles.timestamp, isUser ? styles.userTimestamp : styles.botTimestamp]}>{time}</Text>
     </View>
   )

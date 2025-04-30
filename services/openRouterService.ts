@@ -8,23 +8,30 @@ export interface OpenRouterMessage {
   content: string;
 }
 
-export interface OpenRouterStreamChunk {
+// Updated types based on OpenRouter documentation
+export interface OpenRouterResponse {
   id: string;
   object: string;
   created: number;
   model: string;
   choices: {
-    delta: {
-      content?: string;
-      role?: string;
-    };
     index: number;
-    finish_reason: null | string;
+    message: {
+      role: string;
+      content: string;
+    };
+    finish_reason: string | null;
+    native_finish_reason: string | null;
   }[];
+  usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
 }
 
 /**
- * Gets a streaming chat completion from OpenRouter
+ * Gets a chat completion from OpenRouter and simulates streaming on client side
  */
 export async function getChatCompletionStream(
   messages: OpenRouterMessage[],
@@ -36,10 +43,18 @@ export async function getChatCompletionStream(
     throw new Error('OpenRouter API key is required');
   }
 
-  // Select a suitable free model - adjust as needed
+  // Using deepseek model as confirmed in OpenRouter logs
   const model = 'deepseek/deepseek-chat-v3-0324:free';
 
   try {
+    console.log('[OpenRouter] Making API request to OpenRouter...');
+    
+    // For debugging - log the first few characters of the API key
+    if (apiKey.length > 8) {
+      console.log(`[OpenRouter] Using API key starting with: ${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}`);
+    }
+    
+    // CHANGED: Request as non-streaming to avoid React Native streaming issues
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -51,69 +66,101 @@ export async function getChatCompletionStream(
       body: JSON.stringify({
         model,
         messages,
-        stream: true,
+        stream: false, // CHANGED: Using non-streaming mode
         temperature: 0.7,
         max_tokens: 1000,
       }),
       signal,
     });
 
+    console.log(`[OpenRouter] Response status: ${response.status}`);
+    
+    // Diagnostic information about the response object
+    console.log('[OpenRouter] Response headers:', JSON.stringify(Object.fromEntries([...response.headers])));
+    console.log('[OpenRouter] Response type:', response.type);
+    console.log('[OpenRouter] Response properties:', 
+      JSON.stringify({
+        ok: response.ok,
+        redirected: response.redirected,
+        status: response.status,
+        statusText: response.statusText,
+        type: response.type,
+        url: response.url,
+        bodyUsed: response.bodyUsed,
+        hasBody: !!response.body
+      })
+    );
+
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
     }
 
-    if (!response.body) {
-      throw new Error('Response body is null');
+    // CHANGED: Parse the JSON response instead of trying to read the stream
+    let responseData: OpenRouterResponse;
+    try {
+      const jsonResponse = await response.json();
+      console.log('[OpenRouter] Received JSON response:', JSON.stringify(jsonResponse).substring(0, 200) + '...');
+      responseData = jsonResponse;
+    } catch (error) {
+      console.error('[OpenRouter] Error parsing response JSON:', error);
+      throw new Error('Failed to parse API response');
     }
 
-    // Process the stream
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8');
+    // Get the content from the response
+    const content = responseData.choices[0]?.message?.content || '';
+    if (!content) {
+      throw new Error('No content received from API');
+    }
+
+    console.log(`[OpenRouter] Complete response received, length: ${content.length} chars`);
     
-    // Create a readable stream that will be consumed by our callback
-    return new ReadableStream({
-      async start(controller) {
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            
-            if (done) {
-              controller.close();
-              break;
-            }
-            
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk
-              .split('\n')
-              .filter(line => line.trim().startsWith('data:') && line.trim() !== 'data: [DONE]');
-            
-            for (const line of lines) {
-              try {
-                const jsonStr = line.replace(/^data: /, '').trim();
-                if (!jsonStr) continue;
-                
-                const data: OpenRouterStreamChunk = JSON.parse(jsonStr);
-                const content = data.choices[0]?.delta?.content || '';
-                
-                if (content && onChunk) {
-                  onChunk(content);
-                }
-                
-                controller.enqueue(value);
-              } catch (e) {
-                console.error('Error parsing stream chunk:', e);
-                // Continue with other chunks even if one fails
-              }
-            }
-          }
-        } catch (e) {
-          controller.error(e);
-        }
-      }
-    });
+    // Create an artificial stream by chunking the response
+    return createArtificialStream(content, onChunk);
   } catch (error) {
     console.error('Error in getChatCompletionStream:', error);
     throw error;
   }
+}
+
+/**
+ * Creates an artificial stream from a complete text by chunking it
+ */
+function createArtificialStream(
+  completeText: string, 
+  onChunk?: (content: string) => void
+): ReadableStream<Uint8Array> {
+  // Chunk the text into smaller pieces (10-20 chars per chunk)
+  const chunkSize = Math.floor(Math.random() * 10) + 10; // Random size between 10-20
+  const chunks: string[] = [];
+  
+  for (let i = 0; i < completeText.length; i += chunkSize) {
+    chunks.push(completeText.slice(i, i + chunkSize));
+  }
+  
+  console.log(`[OpenRouter] Created ${chunks.length} artificial chunks`);
+  
+  return new ReadableStream({
+    async start(controller) {
+      try {
+        // Add slight delays between chunks to simulate streaming
+        for (const chunk of chunks) {
+          await new Promise(resolve => setTimeout(resolve, 30 + Math.random() * 50));
+          
+          if (onChunk) {
+            onChunk(chunk);
+          }
+          
+          // Convert string to Uint8Array
+          const encoder = new TextEncoder();
+          controller.enqueue(encoder.encode(chunk));
+        }
+        
+        controller.close();
+      } catch (e) {
+        console.error('[OpenRouter] Error in artificial stream:', e);
+        controller.error(e);
+      }
+    }
+  });
 } 

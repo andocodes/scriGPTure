@@ -30,12 +30,6 @@ export default function ChatScreenLayout() {
           tabBarIcon: ({ color }) => <TabBarIcon name="time-sharp" color={color} />,
         }}
       />
-      <Tabs.Screen
-        name="[id]"
-        options={{
-          href: null,
-        }}
-      />
     </Tabs>
   )
 }

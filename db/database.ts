@@ -47,9 +47,28 @@ async function openMainDatabase(): Promise<void> {
             -- Add a unique constraint to prevent duplicates
             UNIQUE(translation_id, book_id, chapter, verse)
         );
+        
+        -- Initialize chats table for LLM chat history
+        CREATE TABLE IF NOT EXISTS chats (
+            id TEXT PRIMARY KEY NOT NULL,
+            title TEXT NOT NULL DEFAULT 'New Chat',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        
+        -- Initialize messages table for chat messages
+        CREATE TABLE IF NOT EXISTS messages (
+            id TEXT PRIMARY KEY NOT NULL,
+            chat_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            is_user INTEGER NOT NULL,
+            timestamp TEXT NOT NULL,
+            context TEXT, -- JSON string containing verse references
+            FOREIGN KEY (chat_id) REFERENCES chats (id) ON DELETE CASCADE
+        );
     `);
-    console.log("[Database] Favourites table initialized (or already exists).");
-    // --- End Favourites Table Init ---
+    console.log("[Database] Favourites and chat tables initialized (or already exist).");
+    // --- End Tables Init ---
 
   } catch (error) {
     console.error(`[Database] Failed to open main persistent database (${mainDbName}):`, error);
@@ -306,6 +325,272 @@ export async function removeFavouriteFromDb(id: number): Promise<void> {
     }
 }
 
+// --- Export Types ---
+// Add Message type at the top with other type definitions
+export interface Message {
+  id: string;
+  content: string;
+  isUser: boolean;
+  timestamp: string;
+  context?: {
+    verses: Array<{
+      reference: string;
+      text: string;
+    }>
+  }
+}
+
+export interface ChatMetadata {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// --- Chat CRUD Functions ---
+
+// Save a chat with its title and timestamps
+export async function saveChatToDb(chatId: string, title: string): Promise<void> {
+  if (IS_WEB || !mainDb) {
+    console.warn("[Database Chat] Cannot save chat, no main DB connection.");
+    return;
+  }
+  
+  const now = Date.now();
+  try {
+    await mainDb.runAsync(
+      `INSERT OR REPLACE INTO chats (id, title, created_at, updated_at) 
+       VALUES (?, ?, ?, ?)`,
+      [chatId, title, now, now]
+    );
+    console.log(`[Database Chat] Saved/updated chat: ${chatId}`);
+  } catch (error) {
+    console.error(`[Database Chat] Error saving chat ${chatId}:`, error);
+    throw error;
+  }
+}
+
+// Update a chat's title and updated_at timestamp
+export async function updateChatTitleInDb(chatId: string, title: string): Promise<void> {
+  if (IS_WEB || !mainDb) {
+    console.warn("[Database Chat] Cannot update chat title, no main DB connection.");
+    return;
+  }
+  
+  const now = Date.now();
+  try {
+    const result = await mainDb.runAsync(
+      `UPDATE chats SET title = ?, updated_at = ? WHERE id = ?`,
+      [title, now, chatId]
+    );
+    
+    if (result.changes === 0) {
+      throw new Error(`No chat found with ID: ${chatId}`);
+    }
+    
+    console.log(`[Database Chat] Updated title for chat ${chatId}`);
+  } catch (error) {
+    console.error(`[Database Chat] Error updating chat title for ${chatId}:`, error);
+    throw error;
+  }
+}
+
+// Save a message to the database
+export async function saveMessageToDb(message: Message, chatId: string): Promise<void> {
+  if (IS_WEB || !mainDb) {
+    console.warn("[Database Chat] Cannot save message, no main DB connection.");
+    return;
+  }
+  
+  const contextJSON = message.context ? JSON.stringify(message.context) : null;
+  
+  try {
+    // Insert/update the message without explicit transaction
+    await mainDb.runAsync(
+      `INSERT OR REPLACE INTO messages (id, chat_id, content, is_user, timestamp, context)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [message.id, chatId, message.content, message.isUser ? 1 : 0, message.timestamp, contextJSON]
+    );
+    
+    // Update the chat's updated_at timestamp
+    await mainDb.runAsync(
+      `UPDATE chats SET updated_at = ? WHERE id = ?`,
+      [Date.now(), chatId]
+    );
+    
+    console.log(`[Database Chat] Saved message ${message.id} for chat ${chatId}`);
+  } catch (error) {
+    console.error(`[Database Chat] Error saving message:`, error);
+    throw error;
+  }
+}
+
+// Get all messages for a specific chat
+export async function getChatMessagesFromDb(chatId: string): Promise<Message[]> {
+  if (IS_WEB || !mainDb) {
+    console.warn("[Database Chat] Cannot get messages, no main DB connection.");
+    return [];
+  }
+  
+  try {
+    const results = await mainDb.getAllAsync<{
+      id: string,
+      content: string,
+      is_user: number,
+      timestamp: string,
+      context: string | null
+    }>(
+      `SELECT id, content, is_user, timestamp, context FROM messages 
+       WHERE chat_id = ? ORDER BY timestamp ASC`,
+      [chatId]
+    );
+    
+    const messages: Message[] = results.map(row => ({
+      id: row.id,
+      content: row.content,
+      isUser: row.is_user === 1,
+      timestamp: row.timestamp,
+      context: row.context ? JSON.parse(row.context) : undefined
+    }));
+    
+    console.log(`[Database Chat] Retrieved ${messages.length} messages for chat ${chatId}`);
+    return messages;
+  } catch (error) {
+    console.error(`[Database Chat] Error getting messages for chat ${chatId}:`, error);
+    throw error;
+  }
+}
+
+// Get a chat's metadata
+export async function getChatMetadataFromDb(chatId: string): Promise<ChatMetadata | null> {
+  if (IS_WEB || !mainDb) {
+    console.warn("[Database Chat] Cannot get chat metadata, no main DB connection.");
+    return null;
+  }
+  
+  try {
+    const results = await mainDb.getAllAsync<{
+      id: string,
+      title: string,
+      created_at: number,
+      updated_at: number
+    }>(
+      `SELECT id, title, created_at, updated_at FROM chats WHERE id = ? LIMIT 1`,
+      [chatId]
+    );
+    
+    if (results.length === 0) {
+      return null;
+    }
+    
+    const chat = results[0];
+    return {
+      id: chat.id,
+      title: chat.title,
+      createdAt: chat.created_at,
+      updatedAt: chat.updated_at
+    };
+  } catch (error) {
+    console.error(`[Database Chat] Error getting chat metadata for ${chatId}:`, error);
+    throw error;
+  }
+}
+
+// Get all chats
+export async function getAllChatsFromDb(): Promise<ChatMetadata[]> {
+  if (IS_WEB || !mainDb) {
+    console.warn("[Database Chat] Cannot get chats, no main DB connection.");
+    return [];
+  }
+  
+  try {
+    const results = await mainDb.getAllAsync<{
+      id: string,
+      title: string,
+      created_at: number,
+      updated_at: number
+    }>(
+      `SELECT id, title, created_at, updated_at FROM chats ORDER BY updated_at DESC`
+    );
+    
+    const chats: ChatMetadata[] = results.map(chat => ({
+      id: chat.id,
+      title: chat.title,
+      createdAt: chat.created_at,
+      updatedAt: chat.updated_at
+    }));
+    
+    console.log(`[Database Chat] Retrieved ${chats.length} chats`);
+    return chats;
+  } catch (error) {
+    console.error('[Database Chat] Error getting all chats:', error);
+    throw error;
+  }
+}
+
+// Delete a chat and all its messages
+export async function deleteChatFromDb(chatId: string): Promise<boolean> {
+  if (IS_WEB || !mainDb) {
+    console.warn("[Database Chat] Cannot delete chat, no main DB connection.");
+    return false;
+  }
+  
+  try {
+    // With CASCADE, this should also delete all messages
+    const result = await mainDb.runAsync(
+      `DELETE FROM chats WHERE id = ?`,
+      [chatId]
+    );
+    
+    if (result.changes > 0) {
+      console.log(`[Database Chat] Deleted chat ${chatId} and its messages`);
+      return true;
+    } else {
+      console.log(`[Database Chat] No chat found with ID ${chatId}`);
+      return false;
+    }
+  } catch (error) {
+    console.error(`[Database Chat] Error deleting chat ${chatId}:`, error);
+    throw error;
+  }
+}
+
+// Get a preview of the first user message in each chat
+export async function getChatPreviewsFromDb(): Promise<Array<{ chatId: string; preview: string }>> {
+  if (IS_WEB || !mainDb) {
+    console.warn("[Database Chat] Cannot get chat previews, no main DB connection.");
+    return [];
+  }
+  
+  try {
+    // Modified query to find ANY message for chat preview if no user message exists
+    const results = await mainDb.getAllAsync<{
+      chat_id: string,
+      content: string,
+      is_user: number
+    }>(
+      `SELECT chat_id, content, is_user FROM messages 
+       WHERE id IN (
+         SELECT MIN(id) FROM messages GROUP BY chat_id
+       )
+       ORDER BY is_user DESC` // Prioritize user messages
+    );
+    
+    const previews = results.map(row => ({
+      chatId: row.chat_id,
+      preview: row.content.length > 40 
+        ? `${row.content.substring(0, 40)}...` 
+        : row.content
+    }));
+    
+    console.log(`[Database Chat] Retrieved ${previews.length} chat previews`);
+    return previews;
+  } catch (error) {
+    console.error('[Database Chat] Error getting chat previews:', error);
+    throw error;
+  }
+}
+
 // Export the public API
 export {
     // switchActiveDatabase, // Removed: Already exported at definition
@@ -316,5 +601,13 @@ export {
     // loadFavouritesFromDb, // Exported at definition
     // addFavouriteToDb, // Exported at definition
     // removeFavouriteFromDb, // Exported at definition
+    // saveChatToDb, // Exported at definition
+    // updateChatTitleInDb, // Exported at definition
+    // saveMessageToDb, // Exported at definition
+    // getChatMessagesFromDb, // Exported at definition
+    // getChatMetadataFromDb, // Exported at definition
+    // getAllChatsFromDb, // Exported at definition
+    // deleteChatFromDb, // Exported at definition
+    // getChatPreviewsFromDb, // Exported at definition
     // Types are exported at definition
 }; 
