@@ -1,3 +1,4 @@
+import React from 'react';
 import { Tabs, Stack } from "expo-router"
 import { TabBarIcon } from "~/components/TabBarIcon"
 
@@ -13,7 +14,7 @@ export default function BibleStackLayout() {
       {/* We might need to define the Tabs layout in a specific file like `tabs.tsx` */}
       {/* or adjust naming if this doesn't work implicitly. */}
       <Stack.Screen name="index" options={{ headerShown: false }}/>
-      <Stack.Screen name="favourites" options={{ headerShown: false }}/>
+      {/* Favourites is now in the main drawer, not within bible section */}
       <Stack.Screen name="[bookId]" options={{ headerShown: true }} /> 
       <Stack.Screen name="chapter/[chapterId]" options={{ headerShown: true }} /> 
     </Stack>

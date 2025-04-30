@@ -1,5 +1,5 @@
 import { FlashList } from "@shopify/flash-list";
-import { Text, View, Platform, StyleSheet, Pressable } from "react-native";
+import { Text, View, Platform, StyleSheet, Pressable, Alert, Clipboard } from "react-native";
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { useEffect, useState, useMemo } from "react";
 import React from 'react';
@@ -118,6 +118,28 @@ export default function BibleVerseReaderScreen() {
     });
   };
   // --- End Send to Chat Logic ---
+
+  // --- Copy Verse Logic ---
+  const handleCopyVerse = async (verse: Verse) => {
+    if (!selectedTranslation || !bookId || chapterNumber === null) return;
+
+    try {
+      const reference = `${bookName || bookId} ${chapterNumber}:${verse.verse} (${selectedTranslation.abbr})`;
+      const textToCopy = `${reference}\n"${verse.text?.trim()}"`;
+      
+      Clipboard.setString(textToCopy);
+      console.log(`[VerseScreen] Copied to clipboard: ${reference}`);
+      
+      // Give user feedback
+      Alert.alert("Copied", `${reference} has been copied to clipboard.`, [{ text: "OK" }], { 
+        cancelable: true 
+      });
+    } catch (error) {
+      console.error('[VerseScreen] Error copying to clipboard:', error);
+      Alert.alert("Error", "Could not copy verse to clipboard.");
+    }
+  };
+  // --- End Copy Verse Logic ---
 
   useEffect(() => {
     const loadVerseData = async () => {
@@ -291,8 +313,7 @@ export default function BibleVerseReaderScreen() {
                         handleSendToChat(item);
                         break;
                       case 2: // Copy Verse
-                        // TODO: Implement Clipboard logic
-                        console.log("[VerseScreen] Copy action selected (not implemented)");
+                        handleCopyVerse(item);
                         break;
                     }
                   }}
