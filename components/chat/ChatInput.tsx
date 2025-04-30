@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons"
-import React, { useState, useEffect } from "react"
-import { Pressable, TextInput, View, StyleSheet } from "react-native"
+import React, { useState, useEffect, useRef } from "react"
+import { Pressable, TextInput, View, StyleSheet, Platform } from "react-native"
 
 interface ChatInputProps {
   onSend: (message: string) => void
@@ -10,6 +10,7 @@ interface ChatInputProps {
 
 export function ChatInput({ onSend, inputValue, onInputChange }: ChatInputProps) {
   const [inputHeight, setInputHeight] = useState(40)
+  const inputRef = useRef<TextInput>(null)
   
   const handleSend = () => {
     if (inputValue?.trim()) {
@@ -27,18 +28,30 @@ export function ChatInput({ onSend, inputValue, onInputChange }: ChatInputProps)
   return (
     <View style={styles.container}>
       <TextInput
+        ref={inputRef}
         style={[
           styles.input,
-          { height: Math.max(40, Math.min(100, inputHeight)) }
+          // More reliable height calculation with platform checks
+          { 
+            minHeight: 40, 
+            maxHeight: 120,
+            height: 'auto' // Allow auto height on iOS/web
+          },
+          // On Android, manually set height
+          Platform.OS === 'android' ? { height: Math.max(40, inputHeight) } : null,
         ]}
         placeholder="Ask a question..."
         value={inputValue ?? ''}
         onChangeText={onInputChange}
         multiline={true}
-        maxLength={1000}
-        onContentSizeChange={(e) => 
-          setInputHeight(e.nativeEvent.contentSize.height)
-        }
+        textAlignVertical="center"
+        scrollEnabled={true}
+        blurOnSubmit={false} // Don't blur on return press
+        maxLength={2000}
+        onContentSizeChange={(e) => {
+          const newHeight = e.nativeEvent.contentSize.height
+          setInputHeight(Math.min(120, newHeight + 6)) // Add padding to avoid text clipping
+        }}
       />
       <Pressable
         onPress={handleSend}
@@ -66,8 +79,6 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    minHeight: 40,
-    maxHeight: 100,
     paddingHorizontal: 16,
     paddingTop: 10,
     paddingBottom: 10,
@@ -75,6 +86,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#f0f0f0',
     borderRadius: 18,
     fontSize: 16,
+    textAlignVertical: 'center',
   },
   sendButton: {
     width: 36,
