@@ -66,6 +66,13 @@ async function openMainDatabase(): Promise<void> {
             context TEXT, -- JSON string containing verse references
             FOREIGN KEY (chat_id) REFERENCES chats (id) ON DELETE CASCADE
         );
+        
+        -- Initialize app_settings table for app configuration
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY NOT NULL,
+            value TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
     `);
     console.log("[Database] Favourites and chat tables initialized (or already exist).");
     // --- End Tables Init ---
@@ -185,11 +192,6 @@ async function performGetAll<T>(sql: string, params: SQLite.SQLiteBindParams = [
 
 // --- Specific Query Functions (Rely on activeDb) ---
 
-interface ScrollmapperBook {
-    id: number; // Integer ID from DB
-    name: string;
-}
-
 export interface AppBook {
     id: string; // Standard string ID (e.g., 'GEN')
     name: string;
@@ -248,10 +250,6 @@ async function getVersesInternal(abbr: string, bookStringId: string, chapter: nu
     console.log(`[Database] Executing getVersesInternal SQL: ${sql}`); // Log the generated SQL
     return await performGetAll<Verse>(sql, [bookIntId, chapter]);
 }
-
-// Note: `run`, `exec`, `withTransaction` are removed for now as this focuses on reads from pre-built DBs.
-// If write operations are needed later (e.g., for user notes), they would need careful re-implementation 
-// possibly using a separate database file to avoid modifying the downloaded translation dbs.
 
 // --- Favourites CRUD Functions ---
 
@@ -690,23 +688,93 @@ export async function getChatPreviewsFromDb(): Promise<Array<{
   }
 }
 
-// Export the public API
+// --- App Settings CRUD Functions ---
+
+/**
+ * Gets a setting value from the database
+ * @param key The setting key
+ * @param defaultValue Optional default value if setting doesn't exist
+ * @returns The setting value or defaultValue if not found
+ */
+export async function getSettingFromDb(key: string, defaultValue?: string): Promise<string | null> {
+  if (IS_WEB || !mainDb) {
+    console.warn("[Database Settings] Cannot get setting, no main DB connection.");
+    return defaultValue ?? null;
+  }
+  
+  try {
+    const results = await mainDb.getAllAsync<{value: string}>(
+      'SELECT value FROM app_settings WHERE key = ?', 
+      [key]
+    );
+    
+    return results.length > 0 ? results[0].value : (defaultValue ?? null);
+  } catch (error) {
+    console.error(`[Database Settings] Error getting setting for key ${key}:`, error);
+    return defaultValue ?? null;
+  }
+}
+
+/**
+ * Saves a setting to the database
+ * @param key The setting key
+ * @param value The setting value
+ */
+export async function setSettingInDb(key: string, value: string): Promise<void> {
+  if (IS_WEB || !mainDb) {
+    console.warn("[Database Settings] Cannot save setting, no main DB connection.");
+    return;
+  }
+  
+  try {
+    await mainDb.runAsync(
+      'INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)',
+      [key, value, Date.now()]
+    );
+    console.log(`[Database Settings] Saved setting: ${key}`);
+  } catch (error) {
+    console.error(`[Database Settings] Error saving setting for key ${key}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Gets multiple settings at once from the database
+ * @param keys Array of setting keys
+ * @returns Object mapping keys to their values (or null if not found)
+ */
+export async function getBatchSettingsFromDb(keys: string[]): Promise<Record<string, string | null>> {
+  if (IS_WEB || !mainDb || keys.length === 0) {
+    console.warn("[Database Settings] Cannot get batch settings, no main DB connection or empty keys array.");
+    return {};
+  }
+  
+  try {
+    // Create parameterized query with placeholders for each key
+    const placeholders = keys.map(() => '?').join(',');
+    const results = await mainDb.getAllAsync<{key: string, value: string}>(
+      `SELECT key, value FROM app_settings WHERE key IN (${placeholders})`,
+      keys
+    );
+    
+    // Initialize return object with null values for all requested keys
+    const settingsMap: Record<string, string | null> = {};
+    keys.forEach(key => { settingsMap[key] = null; });
+    
+    // Fill in values from results
+    results.forEach(row => {
+      settingsMap[row.key] = row.value;
+    });
+    
+    return settingsMap;
+  } catch (error) {
+    console.error(`[Database Settings] Error getting batch settings:`, error);
+    return {};
+  }
+}
+
 export {
-    // switchActiveDatabase, // Removed: Already exported at definition
     getBooksInternal as getBooks,
     getChaptersInternal as getChapters,
     getVersesInternal as getVerses,
-    // Add new exports
-    // loadFavouritesFromDb, // Exported at definition
-    // addFavouriteToDb, // Exported at definition
-    // removeFavouriteFromDb, // Exported at definition
-    // saveChatToDb, // Exported at definition
-    // updateChatTitleInDb, // Exported at definition
-    // saveMessageToDb, // Exported at definition
-    // getChatMessagesFromDb, // Exported at definition
-    // getChatMetadataFromDb, // Exported at definition
-    // getAllChatsFromDb, // Exported at definition
-    // deleteChatFromDb, // Exported at definition
-    // getChatPreviewsFromDb, // Exported at definition
-    // Types are exported at definition
 }; 

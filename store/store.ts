@@ -1,19 +1,23 @@
 import { create, StateCreator } from 'zustand';
-import AsyncStorage from '@react-native-async-storage/async-storage'; // Import AsyncStorage
-import { loadApiKeys as loadKeysFromSecureStore, API_KEYS, type ApiKeys } from '~/utils/apiKeyManager';
-// Remove API Bible specific imports
-// import { type ApiBibleTranslation } from '~/services/apiBible';
-// import { fetchAvailableTranslations } from '~/services/apiBible'; 
-import { Platform } from 'react-native'; // Import Platform
-import { listDownloadedDbs } from '~/utils/fileDownloader'; // Updated import path
+import { loadApiKeys as loadKeysFromSecureStore } from '~/utils/apiKeyManager';
+import { Platform } from 'react-native';
+import { listDownloadedDbs } from '~/utils/fileDownloader';
 import { scrollmapperTranslationMap, type ScrollmapperTranslationInfo } from '~/config/translationMap'; // Import our map
-import { switchActiveDatabase, loadFavouritesFromDb, addFavouriteToDb, removeFavouriteFromDb, type FavouriteVerse } from '~/db/database'; // Import database switching function and DB functions
-import { Alert } from 'react-native'; // Import Alert for feedback
+import { 
+  switchActiveDatabase, 
+  loadFavouritesFromDb, 
+  addFavouriteToDb, 
+  removeFavouriteFromDb, 
+  type FavouriteVerse,
+  getSettingFromDb,
+  setSettingInDb,
+} from '~/db/database';
+import { Alert } from 'react-native';
 
 const IS_WEB = Platform.OS === 'web';
 const SELECTED_TRANSLATION_KEY = 'selectedTranslationId';
 // Use the scrollmapper abbr as default ID now
-const DEFAULT_TRANSLATION_ID = 'KJV'; 
+const DEFAULT_TRANSLATION_ID = 'KJV';
 
 // Define the state structure
 export interface AppState {
@@ -25,7 +29,6 @@ export interface AppState {
   apiKeysError: string | null;
 
   // Bible Data & Navigation
-  // Use our Scrollmapper type
   availableTranslations: ScrollmapperTranslationInfo[]; 
   downloadedTranslationIds: string[]; // IDs (abbr) of translations with downloaded .db files
   selectedTranslationId: string | null; // ID (abbr) of the currently active translation
@@ -135,7 +138,8 @@ const createAppState: StateCreator<AppState> = (set, get) => ({
       }));
       // Persist the new potentially null selection
       const newSelectedId = get().selectedTranslationId;
-      AsyncStorage.setItem(SELECTED_TRANSLATION_KEY, newSelectedId ?? '').catch(e => console.error("Error saving cleared selected translation:", e));
+      setSettingInDb(SELECTED_TRANSLATION_KEY, newSelectedId ?? '')
+        .catch(e => console.error("Error saving cleared selected translation:", e));
   },
 
   // Allow setting null, store empty string if null
@@ -147,7 +151,7 @@ const createAppState: StateCreator<AppState> = (set, get) => ({
         set({ selectedTranslationId: translationId, isDbReady: false }); 
         let success = false;
         try {
-            await AsyncStorage.setItem(SELECTED_TRANSLATION_KEY, translationId ?? '');
+            await setSettingInDb(SELECTED_TRANSLATION_KEY, translationId ?? '');
 
             // --- Switch active database ---
             const state = get(); // Get updated state
@@ -165,7 +169,7 @@ const createAppState: StateCreator<AppState> = (set, get) => ({
             // --- End switch active database ---
 
         } catch (error) {
-            // Catch errors from both AsyncStorage and switchActiveDatabase
+            // Catch errors from both setting storage and switchActiveDatabase
             console.error(`[Store] Error during setSelectedTranslation for ID ${translationId}:`, error);
             success = false; // Ensure success is false on error
         } finally {
@@ -273,12 +277,12 @@ const createAppState: StateCreator<AppState> = (set, get) => ({
     console.log("[Store Initialize] Loading selectedTranslationId...");
     let storedSelectedId: string | null = null;
     try {
-        storedSelectedId = await AsyncStorage.getItem(SELECTED_TRANSLATION_KEY);
+        storedSelectedId = await getSettingFromDb(SELECTED_TRANSLATION_KEY, '');
         // Handle empty string case from previous save
         if (storedSelectedId === '') storedSelectedId = null; 
-        console.log(`[Store Initialize] Loaded storedSelectedId from AsyncStorage: '${storedSelectedId}'`);
+        console.log(`[Store Initialize] Loaded storedSelectedId from DB: '${storedSelectedId}'`);
     } catch (e) {
-        console.error("[Store Initialize] Failed to load selected translation ID from AsyncStorage", e);
+        console.error("[Store Initialize] Failed to load selected translation ID from DB", e);
     }
 
     // 3. Load downloaded translations from File System (Native Only)
@@ -316,7 +320,8 @@ const createAppState: StateCreator<AppState> = (set, get) => ({
         } else {
             console.warn(`[Store] Stored selected ID '${storedSelectedId}' is no longer valid (not downloaded/available). Resetting.`);
             // Clear invalid stored ID
-            AsyncStorage.removeItem(SELECTED_TRANSLATION_KEY).catch(e => console.error("Error removing invalid selected translation:", e));
+            setSettingInDb(SELECTED_TRANSLATION_KEY, '')
+                .catch(e => console.error("Error removing invalid selected translation:", e));
         }
     }
 
@@ -325,7 +330,8 @@ const createAppState: StateCreator<AppState> = (set, get) => ({
         validatedSelectedId = actualDownloadedIds[0];
         console.log(`[Store] No valid stored ID, falling back to first downloaded: ${validatedSelectedId}`);
         // Persist this fallback selection
-        AsyncStorage.setItem(SELECTED_TRANSLATION_KEY, validatedSelectedId).catch(e => console.error("Error saving fallback selected translation:", e));
+        setSettingInDb(SELECTED_TRANSLATION_KEY, validatedSelectedId)
+            .catch(e => console.error("Error saving fallback selected translation:", e));
     }
     
     // 3. Fallback to default (KJV) if available (Web or Native) and still no selection
@@ -336,7 +342,8 @@ const createAppState: StateCreator<AppState> = (set, get) => ({
             validatedSelectedId = DEFAULT_TRANSLATION_ID;
             console.log(`[Store] No valid stored/downloaded ID, falling back to default ${DEFAULT_TRANSLATION_ID}`);
             // Persist this fallback selection
-            AsyncStorage.setItem(SELECTED_TRANSLATION_KEY, validatedSelectedId).catch(e => console.error("Error saving default selected translation:", e));
+            setSettingInDb(SELECTED_TRANSLATION_KEY, validatedSelectedId)
+                .catch(e => console.error("Error saving default selected translation:", e));
         } else {
              console.log(`[Store] Default ${DEFAULT_TRANSLATION_ID} is available but not downloaded, cannot select.`);
         }
@@ -374,7 +381,8 @@ const createAppState: StateCreator<AppState> = (set, get) => ({
         success = false;
         // Handle error - perhaps clear selection?
         set({ selectedTranslationId: null }); 
-        AsyncStorage.removeItem(SELECTED_TRANSLATION_KEY).catch(e => console.error("Error clearing selected translation after DB init failure:", e));
+        setSettingInDb(SELECTED_TRANSLATION_KEY, '')
+            .catch(e => console.error("Error clearing selected translation after DB init failure:", e));
         // Attempt to switch to null to ensure connection is closed
         try {
             await switchActiveDatabase(null); 

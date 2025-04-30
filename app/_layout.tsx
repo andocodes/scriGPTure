@@ -8,7 +8,6 @@ import { saveApiKeys } from "~/utils/apiKeyManager"
 import { useAppStore } from "~/store/store";
 
 export const unstable_settings = {
-  // Ensure that reloading on `/modal` keeps a back button present.
   initialRouteName: "(drawer)",
 }
 
@@ -39,12 +38,10 @@ export default function RootLayout() {
       } catch (error) {
           console.error("CRITICAL: Failed to initialize app state:", error);
       }
-
-      // TODO: Add any other essential async setup here
     };
 
     initializeApp();
-  }, []); // Run only once on mount
+  }, []);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

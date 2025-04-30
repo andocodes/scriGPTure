@@ -12,7 +12,6 @@ export default function HomeScreen() {
   const videoRef = useRef<Video | null>(null)
   const [videoLoaded, setVideoLoaded] = useState(false)
 
-  // Handle video load success
   const onVideoLoad = () => {
     setVideoLoaded(true)
     if (videoRef.current) {
@@ -23,12 +22,11 @@ export default function HomeScreen() {
   return (
     <>
       <Stack.Screen options={{ 
-        headerTitle: "", // Remove the Home title from header
+        headerTitle: "",
         headerTransparent: true,
         headerShadowVisible: false,
       }} />
       <Container style={styles.container} fullBleed>
-        {/* Video Background */}
         <View style={styles.videoContainer} pointerEvents="box-none">
           <Video
             ref={videoRef}
@@ -41,7 +39,6 @@ export default function HomeScreen() {
             onLoad={onVideoLoad}
           />
           
-          {/* Overlay to ensure text is readable */}
           <View style={styles.overlay} />
         </View>
 
@@ -57,7 +54,7 @@ export default function HomeScreen() {
           <Button
             title="Get started"
             onPress={() => {
-              clearMessages() // Clear messages before navigating to new chat
+              clearMessages()
               router.push("/(drawer)/(chat)/")
             }}
           />
@@ -69,12 +66,12 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    padding: 0, // Remove any padding that might affect full screen display
+    padding: 0,
   },
   videoContainer: {
     ...StyleSheet.absoluteFillObject,
-    zIndex: -1, // Reduce z-index to ensure it doesn't block interactions
-    overflow: 'hidden', // Prevent video from spilling outside container
+    zIndex: -1,
+    overflow: 'hidden',
   },
   backgroundVideo: {
     width: '100%',
@@ -87,7 +84,7 @@ const styles = StyleSheet.create({
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)', // Dark semi-transparent overlay
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
   },
   contentContainer: {
     flex: 1,
@@ -95,7 +92,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
     zIndex: 1,
-    paddingBottom: 50, // Add extra padding at bottom to ensure content isn't too close to edge
+    paddingBottom: 50,
   },
   title: {
     fontSize: 32,
@@ -105,7 +102,7 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   highlightText: {
-    color: '#ff3b30', // Red color for GPT
+    color: '#ff3b30',
   },
   subtitle: {
     fontSize: 18,

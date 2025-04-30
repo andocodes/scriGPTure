@@ -1,5 +1,6 @@
 import Ionicons from "@expo/vector-icons/Ionicons"
 import { StyleSheet } from "react-native"
+import React from "react"
 
 export const TabBarIcon = (props: {
   name: React.ComponentProps<typeof Ionicons>["name"]

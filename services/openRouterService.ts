@@ -44,18 +44,11 @@ export async function getChatCompletionStream(
     throw new Error('OpenRouter API key is required');
   }
 
-  // Using deepseek model as confirmed in OpenRouter logs
   const model = 'deepseek/deepseek-chat-v3-0324:free';
 
   try {
     console.log('[OpenRouter] Making API request to OpenRouter...');
     
-    // For debugging - log the first few characters of the API key
-    if (apiKey.length > 8) {
-      console.log(`[OpenRouter] Using API key starting with: ${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}`);
-    }
-    
-    // CHANGED: Request as non-streaming to avoid React Native streaming issues
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -67,7 +60,7 @@ export async function getChatCompletionStream(
       body: JSON.stringify({
         model,
         messages,
-        stream: false, // CHANGED: Using non-streaming mode
+        stream: false,
         temperature: 0.7,
         max_tokens: 1000,
       }),
@@ -75,29 +68,12 @@ export async function getChatCompletionStream(
     });
 
     console.log(`[OpenRouter] Response status: ${response.status}`);
-    
-    // Diagnostic information about the response object
-    console.log('[OpenRouter] Response headers:', JSON.stringify(Object.fromEntries([...response.headers])));
-    console.log('[OpenRouter] Response type:', response.type);
-    console.log('[OpenRouter] Response properties:', 
-      JSON.stringify({
-        ok: response.ok,
-        redirected: response.redirected,
-        status: response.status,
-        statusText: response.statusText,
-        type: response.type,
-        url: response.url,
-        bodyUsed: response.bodyUsed,
-        hasBody: !!response.body
-      })
-    );
 
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
     }
 
-    // CHANGED: Parse the JSON response instead of trying to read the stream
     let responseData: OpenRouterResponse;
     try {
       const jsonResponse = await response.json();

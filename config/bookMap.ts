@@ -32,4 +32,4 @@ bookMappingTuples.forEach(([strId, intId]) => {
   bookIntToStringId[intId] = strId;
 });
 
-export const bookIdList = bookMappingTuples.map(([strId]) => strId); // Useful for iteration 
+export const bookIdList = bookMappingTuples.map(([strId]) => strId);
