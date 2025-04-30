@@ -32,36 +32,42 @@ export default function ChatScreen() {
       // Check if we already have this verse in context (by reference)
       const exists = contextVerses.some(v => v.reference === params.verseReference)
       if (!exists) {
+        console.log(`[ChatScreen] Adding verse to context: ${params.verseReference}`);
         setContextVerses(prev => [...prev, newVerseContext])
       }
     }
-  }, [params])
+  }, [params.verseReference, params.verseText])
 
   const handleRemoveVerse = (id: string) => {
-    setContextVerses(prev => prev.filter(verse => verse.id !== id))
+    console.log(`[ChatScreen] Removing verse with id: ${id}`);
+    setContextVerses(prev => {
+      const updated = prev.filter(verse => verse.id !== id);
+      console.log(`[ChatScreen] Updated context verses:`, updated);
+      return updated;
+    });
   }
 
   const handleClearVerses = () => {
-    setContextVerses([])
+    console.log('[ChatScreen] Clearing all context verses');
+    setContextVerses([]);
   }
 
   const handleSend = async (content: string) => {
-    // Add context information if present
-    let messageContent = content
+    // Create message context from verses if present
+    const messageContext = contextVerses.length > 0 ? {
+      verses: contextVerses.map(v => ({
+        reference: v.reference,
+        text: v.text
+      }))
+    } : undefined;
     
-    if (contextVerses.length > 0) {
-      const contextHeader = "Context provided:\n" + 
-        contextVerses.map(v => `${v.reference}: "${v.text}"`).join("\n\n") +
-        "\n\n" + content;
-        
-      messageContent = contextHeader;
-    }
-    
+    // Create the user message without embedding context in content
     const newMessage = {
       id: Date.now().toString(),
-      content: messageContent,
+      content: content,
       isUser: true,
       timestamp: new Date().toISOString(),
+      context: messageContext,
     }
 
     setMessages([...messages, newMessage])
@@ -69,6 +75,16 @@ export default function ChatScreen() {
 
     // Clear input after sending
     setInputValue("")
+
+    // For the backend processing, we would include context in the prompt
+    // Here we construct what would be sent to the backend API
+    let apiPrompt = content;
+    if (contextVerses.length > 0) {
+      const contextText = "Context:\n" + 
+        contextVerses.map(v => `${v.reference}: "${v.text}"`).join("\n");
+      apiPrompt = `${contextText}\n\nUser question: ${content}`;
+      console.log("[ChatScreen] API prompt with context:", apiPrompt);
+    }
 
     // Simulate AI response
     setTimeout(() => {
@@ -104,6 +120,7 @@ export default function ChatScreen() {
               content={message.content}
               isUser={message.isUser}
               timestamp={new Date(message.timestamp)}
+              context={message.context}
             />
           ))}
           {isLoading && <LoadingMessage />}

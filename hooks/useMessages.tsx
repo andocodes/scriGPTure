@@ -1,10 +1,16 @@
-import { ReactNode, createContext, useContext, useState } from "react"
+import React, { createContext, ReactNode, useContext, useState } from "react"
 
-interface Message {
+export interface Message {
   id: string
   content: string
   isUser: boolean
   timestamp: string
+  context?: {
+    verses: Array<{
+      reference: string
+      text: string
+    }>
+  }
 }
 
 interface MessagesContextType {
@@ -15,19 +21,19 @@ interface MessagesContextType {
 
 const MessagesContext = createContext<MessagesContextType | undefined>(undefined)
 
-export function MessagesProvider({ children }: { children: ReactNode }) {
+interface MessagesProviderProps {
+  children: ReactNode
+}
+
+export function MessagesProvider({ children }: MessagesProviderProps) {
   const [messages, setMessages] = useState<Message[]>([])
 
-  const clearMessages = () => setMessages([])
+  const clearMessages = () => {
+    setMessages([])
+  }
 
   return (
-    <MessagesContext.Provider
-      value={{
-        messages,
-        setMessages,
-        clearMessages,
-      }}
-    >
+    <MessagesContext.Provider value={{ messages, setMessages, clearMessages }}>
       {children}
     </MessagesContext.Provider>
   )
