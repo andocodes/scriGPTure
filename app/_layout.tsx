@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { Stack } from "expo-router"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
 import { MessagesProvider } from "~/hooks/useMessages"
-import { loadApiKeys, saveApiKeys } from "~/utils/apiKeyManager"
+import { saveApiKeys, API_KEYS } from "~/utils/apiKeyManager"
 import { useAppStore } from "~/store/store";
 
 export const unstable_settings = {
@@ -13,38 +13,33 @@ export const unstable_settings = {
 
 // API Keys - REMOVE/REPLACE with a secure method before production
 const OPENROUTER_API_KEY = "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";
-const APIBIBLE_API_KEY = "61835cdb7d9757a00df8262d1e41d338";
 
 export default function RootLayout() {
   // Effect to save API keys and initialize store
   useEffect(() => {
     const initializeApp = async () => {
-      // 1. Check and save API keys if needed
-      const { openRouterKey, apiBibleKey } = await loadApiKeys();
-      if (!openRouterKey || !apiBibleKey) {
-        console.log("API keys not found, attempting to save...");
-        try {
-          await saveApiKeys(OPENROUTER_API_KEY, APIBIBLE_API_KEY);
-        } catch (error) {
-          console.error("Failed to save API keys on initial load:", error);
-          // Decide if app should proceed without keys?
-        }
-      } else {
-        console.log("API keys already stored.");
-      }
-
-      // 2. Initialize the Zustand store (loads keys into state, etc.)
+      // 1. Initialize the Zustand store (loads keys into state, etc.)
       console.log("Initializing app state...");
       try {
-        // Get the action from the store instance
+        // First try to initialize store which will load any existing keys
         await useAppStore.getState().initializeStore(); 
         console.log("App state initialized.");
+        
+        // Check if OpenRouter key exists, save if not
+        const openRouterKey = useAppStore.getState().openRouterApiKey;
+        if (!openRouterKey) {
+          console.log("OpenRouter API key not found, saving default...");
+          await saveApiKeys({
+            OPENROUTER: OPENROUTER_API_KEY
+          });
+          // Reload keys into store
+          await useAppStore.getState().loadApiKeys();
+        }
       } catch (error) {
           console.error("CRITICAL: Failed to initialize app state:", error);
-          // Handle initialization error (e.g., show error message, retry?)
       }
 
-      // TODO: Add any other essential async setup here (e.g., check DB connection)
+      // TODO: Add any other essential async setup here
     };
 
     initializeApp();

@@ -4,9 +4,9 @@ import { Stack } from 'expo-router';
 
 import { Container } from '~/components/Container';
 import { useAppStore } from '~/store/store';
-// Import new services and config
-import { type ScrollmapperTranslationInfo } from '~/config/translationMap';
-import { downloadDbFile, deleteDbFile, checkDbExists } from '~/services/fileDownloader';
+// Import from the new location
+import { ScrollmapperTranslationInfo } from '~/config/translationMap';
+import { downloadDbFile, deleteDbFile, checkDbExists } from '~/utils/fileDownloader';
 
 // Remove old imports
 // import { fetchAvailableTranslations, downloadAndStoreTranslation, type ApiBibleTranslation } from '~/services/apiBible';

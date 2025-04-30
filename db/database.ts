@@ -1,6 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 import { Platform } from 'react-native';
-import { getLocalDbPath, checkDbExists } from '../services/fileDownloader'; // Import helpers
+import { getLocalDbPath, checkDbExists } from '../utils/fileDownloader'; // Import helpers
 import { bookStringToIntId, bookIntToStringId } from '~/config/bookMap'; // Import book ID mappers
 
 // Types should be available from the main import

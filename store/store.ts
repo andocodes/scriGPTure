@@ -1,11 +1,11 @@
 import { create, StateCreator } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage'; // Import AsyncStorage
-import { loadApiKeys as loadKeysFromSecureStore } from '~/utils/apiKeyManager';
+import { loadApiKeys as loadKeysFromSecureStore, API_KEYS, type ApiKeys } from '~/utils/apiKeyManager';
 // Remove API Bible specific imports
 // import { type ApiBibleTranslation } from '~/services/apiBible';
 // import { fetchAvailableTranslations } from '~/services/apiBible'; 
 import { Platform } from 'react-native'; // Import Platform
-import { listDownloadedDbs } from '../services/fileDownloader'; // Import file system helper
+import { listDownloadedDbs } from '~/utils/fileDownloader'; // Updated import path
 import { scrollmapperTranslationMap, type ScrollmapperTranslationInfo } from '~/config/translationMap'; // Import our map
 import { switchActiveDatabase, loadFavouritesFromDb, addFavouriteToDb, removeFavouriteFromDb, type FavouriteVerse } from '~/db/database'; // Import database switching function and DB functions
 import { Alert } from 'react-native'; // Import Alert for feedback
@@ -63,8 +63,8 @@ export interface AppState {
 
   // --- Favourites Actions ---
   loadFavourites: () => Promise<void>;
-  addFavourite: (verse: Omit<FavouriteVerse, 'id' | 'created_at'>) => Promise<void>;
-  removeFavourite: (favouriteId: number) => Promise<void>; // Use DB id
+  addFavourite: (favourite: Omit<FavouriteVerse, 'id' | 'created_at'>) => Promise<void>;
+  removeFavourite: (id: number) => Promise<void>; // Use DB id
 }
 
 // Define the creator function with the explicit type
@@ -97,10 +97,15 @@ const createAppState: StateCreator<AppState> = (set, get) => ({
     console.log("[Store loadApiKeys] Attempting to load keys...");
     try {
       set({ apiKeysLoaded: false, apiKeysError: null });
-      console.log("[Store loadApiKeys] Calling loadKeysFromSecureStore...");
-      const { openRouterKey, apiBibleKey } = await loadKeysFromSecureStore();
-      console.log(`[Store loadApiKeys] Loaded keys: OpenRouter=${!!openRouterKey}, ApiBible=${!!apiBibleKey}`);
-      set({ openRouterApiKey: openRouterKey, apiBibleApiKey: apiBibleKey, apiKeysLoaded: true });
+      const keys = await loadKeysFromSecureStore();
+      console.log(`[Store loadApiKeys] Loaded keys: ${Object.keys(keys).join(', ')}`);
+      
+      // Set the OpenRouter API key in state
+      set({ 
+        openRouterApiKey: keys.OPENROUTER || null,
+        apiKeysLoaded: true 
+      });
+      
       console.log("[Store loadApiKeys] State updated successfully.");
     } catch (error) {
       console.error("[Store loadApiKeys] Error loading API keys into store:", error);
@@ -207,17 +212,17 @@ const createAppState: StateCreator<AppState> = (set, get) => ({
     }
   },
 
-  addFavourite: async (verse: Omit<FavouriteVerse, 'id' | 'created_at'>) => {
+  addFavourite: async (favourite: Omit<FavouriteVerse, 'id' | 'created_at'>) => {
     if (IS_WEB) return; // Favourites only stored in native DB
-    console.log(`[Store Favourites] Adding favourite: ${verse.book_id} ${verse.chapter}:${verse.verse} (${verse.translation_id})`);
+    console.log(`[Store Favourites] Adding favourite: ${favourite.book_id} ${favourite.chapter}:${favourite.verse} (${favourite.translation_id})`);
     try {
-        const newId = await addFavouriteToDb(verse);
+        const newId = await addFavouriteToDb(favourite);
         if (newId) {
             // Optimistically add to state or reload?
             // Let's reload for consistency and to get the ID/timestamp
              await get().loadFavourites(); 
             // Alternatively, add manually:
-            // const newFavourite = { ...verse, id: newId, created_at: new Date().toISOString() };
+            // const newFavourite = { ...favourite, id: newId, created_at: new Date().toISOString() };
             // set(state => ({ favourites: [...state.favourites, newFavourite] }));
              console.log(`[Store Favourites] Favourite added successfully (ID: ${newId}). Reloaded list.`);
         } else {
