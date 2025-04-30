@@ -297,7 +297,10 @@ export default function BibleVerseReaderScreen() {
                     }
                   }}
                 >
-                  <Pressable style={styles.verseRow}>
+                  <Pressable style={[
+                    styles.verseRow,
+                    isFavourited && styles.favouritedVerse
+                  ]}>
                     <Text style={styles.verseNumber}>{item.verse}</Text>
                     <Text style={styles.verseText}>{item.text?.trim() || '[Verse text not available]'}</Text>
                   </Pressable>
@@ -327,6 +330,12 @@ const styles = StyleSheet.create({
       marginBottom: 12,
       alignItems: 'flex-start',
       backgroundColor: 'transparent',
+      borderRadius: 6,
+    },
+    favouritedVerse: {
+      backgroundColor: '#fff8e1', // Soft yellow background
+      borderLeftWidth: 3,
+      borderLeftColor: '#ffd54f', // Amber/gold border
     },
     verseNumber: {
       fontSize: 13, 
