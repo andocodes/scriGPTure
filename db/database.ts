@@ -594,44 +594,95 @@ export async function deleteChatFromDb(chatId: string): Promise<boolean> {
 }
 
 // Get a preview of messages in each chat
-export async function getChatPreviewsFromDb(): Promise<Array<{ chatId: string; preview: string; isUserMessage: boolean }>> {
+export async function getChatPreviewsFromDb(): Promise<Array<{ 
+  chatId: string; 
+  userPreview: string | null;
+  aiPreview: string | null;
+}>> {
   if (IS_WEB || !mainDb) {
     console.warn("[Database Chat] Cannot get chat previews, no main DB connection.");
     return [];
   }
   
   try {
-    // Get the most recent message for each chat to use as preview
-    const results = await mainDb.getAllAsync<{
+    // Get the first user message and first AI message for each chat
+    console.log('[Database Chat] Fetching user and AI message previews');
+    
+    // First, get the first user message for each chat
+    const userMessages = await mainDb.getAllAsync<{
       chat_id: string,
-      content: string,
-      is_user: number
+      content: string
     }>(
-      `SELECT m.chat_id, m.content, m.is_user FROM messages m
-       INNER JOIN (
-         SELECT chat_id, MAX(timestamp) as latest_timestamp
-         FROM messages
-         GROUP BY chat_id
-       ) latest ON m.chat_id = latest.chat_id AND m.timestamp = latest.latest_timestamp
-       ORDER BY m.timestamp DESC`
+      `SELECT m1.chat_id, m1.content
+       FROM messages m1
+       WHERE m1.is_user = 1
+       AND m1.timestamp = (
+         SELECT MIN(m2.timestamp)
+         FROM messages m2
+         WHERE m2.chat_id = m1.chat_id AND m2.is_user = 1
+       )`
     );
     
-    const previews = results.map(row => {
-      // Just take the content as is - without trying to strip markdown
-      // Limit to a reasonable preview length
-      const maxPreviewLength = 150;
-      const content = row.content.length > maxPreviewLength 
-        ? `${row.content.substring(0, maxPreviewLength)}...` 
-        : row.content;
+    // Then, get the first AI message for each chat
+    const aiMessages = await mainDb.getAllAsync<{
+      chat_id: string,
+      content: string
+    }>(
+      `SELECT m1.chat_id, m1.content
+       FROM messages m1
+       WHERE m1.is_user = 0
+       AND m1.timestamp = (
+         SELECT MIN(m2.timestamp)
+         FROM messages m2
+         WHERE m2.chat_id = m1.chat_id AND m2.is_user = 0
+       )`
+    );
+    
+    // Create a map of chat IDs to their messages
+    const chatMap = new Map<string, {
+      userPreview: string | null,
+      aiPreview: string | null
+    }>();
+    
+    // Add user messages to the map
+    userMessages.forEach(msg => {
+      const maxPreviewLength = 100;
+      const preview = msg.content.length > maxPreviewLength
+        ? `${msg.content.substring(0, maxPreviewLength)}...`
+        : msg.content;
         
-      return {
-        chatId: row.chat_id,
-        preview: content,
-        isUserMessage: row.is_user === 1
-      };
+      chatMap.set(msg.chat_id, {
+        userPreview: preview,
+        aiPreview: null
+      });
     });
     
-    console.log(`[Database Chat] Retrieved ${previews.length} chat previews`);
+    // Add AI messages to the map
+    aiMessages.forEach(msg => {
+      const maxPreviewLength = 100;
+      const preview = msg.content.length > maxPreviewLength
+        ? `${msg.content.substring(0, maxPreviewLength)}...`
+        : msg.content;
+        
+      const existing = chatMap.get(msg.chat_id);
+      if (existing) {
+        existing.aiPreview = preview;
+      } else {
+        chatMap.set(msg.chat_id, {
+          userPreview: null,
+          aiPreview: preview
+        });
+      }
+    });
+    
+    // Convert the map to an array of results
+    const previews = Array.from(chatMap.entries()).map(([chatId, previews]) => ({
+      chatId,
+      userPreview: previews.userPreview,
+      aiPreview: previews.aiPreview
+    }));
+    
+    console.log(`[Database Chat] Retrieved previews for ${previews.length} chats`);
     return previews;
   } catch (error) {
     console.error('[Database Chat] Error getting chat previews:', error);

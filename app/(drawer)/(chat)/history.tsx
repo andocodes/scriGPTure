@@ -10,8 +10,8 @@ interface ChatHistoryItem {
   id: string
   timestamp: number
   title: string
-  preview: string
-  isUserMessage: boolean
+  userPreview: string | null
+  aiPreview: string | null
 }
 
 export default function ChatHistoryScreen() {
@@ -53,8 +53,8 @@ export default function ChatHistoryScreen() {
         const previewItem = previews.find(p => p.chatId === item.id)
         return {
           ...item,
-          preview: previewItem?.preview || "Empty chat",
-          isUserMessage: previewItem?.isUserMessage || false
+          userPreview: previewItem?.userPreview || null,
+          aiPreview: previewItem?.aiPreview || null
         }
       })
       
@@ -200,27 +200,48 @@ export default function ChatHistoryScreen() {
           </View>
         )}
         <View className="mb-1">
-          {/* Add user message prefix if needed */}
-          {item.isUserMessage && (
-            <Text className="text-sm font-medium text-gray-700">You: </Text>
+          {/* Show both user and AI messages in preview */}
+          {item.userPreview && (
+            <View className="flex-row mb-1">
+              <Text className="text-sm font-medium text-gray-700">You: </Text>
+              <View style={{ flex: 1 }}>
+                <Markdown style={{
+                  body: { fontSize: 14, color: '#4a5568' },
+                  paragraph: { marginTop: 0, marginBottom: 0 },
+                  heading1: { fontSize: 16, marginTop: 0, marginBottom: 0 },
+                  heading2: { fontSize: 15, marginTop: 0, marginBottom: 0 },
+                  bullet_list: { marginTop: 0, marginBottom: 0 },
+                  ordered_list: { marginTop: 0, marginBottom: 0 },
+                  code_block: { fontSize: 12 }
+                }}>
+                  {item.userPreview}
+                </Markdown>
+              </View>
+            </View>
           )}
           
-          {/* Use Markdown for preview text */}
-          <View className="flex-row">
-            <View style={{ flex: 1 }}>
-              <Markdown style={{
-                body: { fontSize: 14, color: '#4a5568' },
-                paragraph: { marginTop: 0, marginBottom: 0 },
-                heading1: { fontSize: 16, marginTop: 0, marginBottom: 0 },
-                heading2: { fontSize: 15, marginTop: 0, marginBottom: 0 },
-                bullet_list: { marginTop: 0, marginBottom: 0 },
-                ordered_list: { marginTop: 0, marginBottom: 0 },
-                code_block: { fontSize: 12 }
-              }}>
-                {item.preview}
-              </Markdown>
+          {item.aiPreview && (
+            <View className="flex-row">
+              <Text className="text-sm font-medium text-gray-700">scriGPTure: </Text>
+              <View style={{ flex: 1 }}>
+                <Markdown style={{
+                  body: { fontSize: 14, color: '#4a5568' },
+                  paragraph: { marginTop: 0, marginBottom: 0 },
+                  heading1: { fontSize: 16, marginTop: 0, marginBottom: 0 },
+                  heading2: { fontSize: 15, marginTop: 0, marginBottom: 0 },
+                  bullet_list: { marginTop: 0, marginBottom: 0 },
+                  ordered_list: { marginTop: 0, marginBottom: 0 },
+                  code_block: { fontSize: 12 }
+                }}>
+                  {item.aiPreview}
+                </Markdown>
+              </View>
             </View>
-          </View>
+          )}
+          
+          {!item.userPreview && !item.aiPreview && (
+            <Text className="text-sm text-gray-500 italic">Empty chat</Text>
+          )}
         </View>
         <Text className="text-xs text-gray-500">{formatDate(item.timestamp)}</Text>
       </View>
