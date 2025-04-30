@@ -1,6 +1,6 @@
 import { Stack, useRouter } from "expo-router"
 import React, { useRef, useState } from 'react'
-import { Text, View, StyleSheet, Dimensions } from "react-native"
+import { Text, View, StyleSheet } from "react-native"
 import { Video, ResizeMode } from 'expo-av'
 import { Button } from "~/components/Button"
 import { Container } from "~/components/Container"
@@ -22,10 +22,14 @@ export default function HomeScreen() {
 
   return (
     <>
-      <Stack.Screen options={{ title: "Home" }} />
-      <Container>
+      <Stack.Screen options={{ 
+        headerTitle: "", // Remove the Home title from header
+        headerTransparent: true,
+        headerShadowVisible: false,
+      }} />
+      <Container style={styles.container} fullBleed>
         {/* Video Background */}
-        <View style={styles.videoContainer}>
+        <View style={styles.videoContainer} pointerEvents="box-none">
           <Video
             ref={videoRef}
             source={require("~/assets/background.mp4")} 
@@ -41,7 +45,7 @@ export default function HomeScreen() {
           <View style={styles.overlay} />
         </View>
 
-        <View style={styles.contentContainer}>
+        <View style={styles.contentContainer} pointerEvents="box-none">
           <Text style={styles.title}>
             scri<Text style={styles.highlightText}>GPT</Text>ure
           </Text>
@@ -63,17 +67,23 @@ export default function HomeScreen() {
   )
 }
 
-const { width, height } = Dimensions.get('window')
-
 const styles = StyleSheet.create({
+  container: {
+    padding: 0, // Remove any padding that might affect full screen display
+  },
   videoContainer: {
     ...StyleSheet.absoluteFillObject,
-    zIndex: 0,
+    zIndex: -1, // Reduce z-index to ensure it doesn't block interactions
+    overflow: 'hidden', // Prevent video from spilling outside container
   },
   backgroundVideo: {
-    width: width,
-    height: height,
+    width: '100%',
+    height: '100%',
     position: 'absolute',
+    top: 0,
+    left: 0,
+    bottom: 0,
+    right: 0,
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
@@ -85,6 +95,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
     zIndex: 1,
+    paddingBottom: 50, // Add extra padding at bottom to ensure content isn't too close to edge
   },
   title: {
     fontSize: 32,

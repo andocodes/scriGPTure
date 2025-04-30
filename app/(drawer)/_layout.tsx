@@ -9,8 +9,12 @@ import { HeaderNewChatButton } from "~/components/chat/HeaderNewChatButton"
 const HomeScreenLayout = () => (
   <Drawer
     screenOptions={{
-      headerTintColor: "red", // This changes the burger menu color
       drawerActiveTintColor: "red", // Active item text/icon color
+      headerTitleStyle: {
+        color: "black" // Header title color
+      },
+      headerTintColor: "red", // Make ALL burger menu icons red across the app
+      drawerActiveBackgroundColor: "#f8e8e8" // Light red background for active item
     }}
   >
     <Drawer.Screen
@@ -19,7 +23,7 @@ const HomeScreenLayout = () => (
         headerTitle: "Home",
         drawerLabel: "Home",
         drawerIcon: ({ size, color }) => <Ionicons name="home-sharp" size={size} color={color} />,
-        headerRight: () => <HeaderNewChatButton />,
+        // Remove the headerRight button
       }}
     />
     <Drawer.Screen
