@@ -43,20 +43,21 @@ const HomeScreenLayout = () => (
       }}
     />
     <Drawer.Screen
-      name="favourites"
+      name="(favourites)"
       options={{
         headerTitle: "Favourites",
         drawerLabel: "Favourites",
         drawerIcon: ({ size, color }) => <MaterialIcons name="favorite" size={size} color={color} />,
-        headerRight: () => <HeaderNewChatButton />,
+        headerShown: false, // Hide the drawer header for favourites
       }}
     />
     <Drawer.Screen
-      name="settings"
+      name="(settings)"
       options={{
         headerTitle: "Settings",
         drawerLabel: "Settings",
         drawerIcon: ({ size, color }) => <Ionicons name="settings-sharp" size={size} color={color} />,
+        headerShown: false // Hide the drawer header for settings
       }}
     />
   </Drawer>

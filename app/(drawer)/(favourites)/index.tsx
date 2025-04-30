@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, FlatList, StyleSheet, TouchableOpacity } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 
 import { Container } from '~/components/Container';
@@ -65,8 +65,6 @@ export default function FavouritesScreen() {
 
     return (
         <Container>
-            {/* Stack Title is set in _layout.tsx */}
-            {/* <Stack.Screen options={{ title: 'Favourites' }} /> */}
             <View style={styles.container}>
                 {favouritesLoading && <Text>Loading favourites...</Text>}
                 {favouritesError && <Text style={styles.errorText}>Error: {favouritesError}</Text>}

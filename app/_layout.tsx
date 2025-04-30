@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { Stack } from "expo-router"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
 import { MessagesProvider } from "~/hooks/useMessages"
-import { saveApiKeys, API_KEYS } from "~/utils/apiKeyManager"
+import { saveApiKeys } from "~/utils/apiKeyManager"
 import { useAppStore } from "~/store/store";
 
 export const unstable_settings = {
