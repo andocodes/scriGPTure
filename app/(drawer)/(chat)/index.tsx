@@ -8,7 +8,7 @@ import { LoadingMessage } from "~/components/chat/LoadingMessage"
 import { Message } from "~/components/chat/Message"
 import { VerseContext, VerseContextItem } from "~/components/chat/VerseContext"
 import { useMessages } from "~/hooks/useMessages"
-import { getChatCompletionStream, OpenRouterMessage } from "~/services/openRouterService"
+import { getChatCompletionStream, getChatCompletion, OpenRouterMessage } from "~/services/openRouterService"
 import { SYSTEM_PROMPT, MISSING_API_KEY_MESSAGE, API_UNAVAILABLE_MESSAGE } from "~/config/prompts"
 import { useAppStore } from "~/store/store"
 import { saveMessageToDb } from "~/db/database"
@@ -211,7 +211,7 @@ export default function ChatScreen() {
       console.log(`[ChatScreen] Auto-generated title: ${generatedTitle}`);
     }
 
-    // First update the messages in state
+    // First update the messages in state with the user's message
     const updatedMessages = [...messages, newMessage];
     setMessages(updatedMessages);
     setIsLoading(true);
@@ -274,77 +274,74 @@ export default function ChatScreen() {
         timestamp: new Date().toISOString(),
       };
       
+      // Add the empty assistant message to UI
       setMessages(prev => [...prev, assistantMessage]);
       
-      // Process streaming response
-      const stream = await getChatCompletionStream(
+      // First, get the complete response and save it to the database
+      const completeContent = await getChatCompletion(
         apiMessages,
         openRouterApiKey,
-        abortControllerRef.current.signal,
-        (chunk) => {
-          // Update the assistant message content as chunks arrive
-          setMessages(prevMessages => {
-            return prevMessages.map(msg => {
-              if (msg.id === assistantMessageId) {
-                return {
-                  ...msg,
-                  content: msg.content + chunk
-                };
-              }
-              return msg;
-            });
-          });
-          
-          // Scroll to the latest content
-          scrollViewRef.current?.scrollToEnd({ animated: true });
-        }
+        abortControllerRef.current.signal
       );
       
-      if (!stream) {
-        throw new Error("Failed to get response stream");
-      }
+      console.log(`[ChatScreen] Received complete content of length: ${completeContent.length}`);
       
-      // The stream processing happens via the onChunk callback
-      // We just need to wait for it to complete
-      await new Promise<void>((resolve, reject) => {
-        // The ReadableStream is already being consumed by our callback
-        // This promise resolves when the stream is done
-        abortControllerRef.current?.signal.addEventListener('abort', () => {
-          reject(new Error('Request aborted'));
-        });
-        
-        // We don't actually consume the stream here since it's handled by getChatCompletionStream
-        resolve();
-      });
-      
-      // Explicitly save the completed AI message to the database
+      // Save the complete message to the database
       if (currentChatId) {
         try {
-          // Use setMessages to get the current messages array and find our AI message
-          setMessages(currentMessages => {
-            // Find the AI message
-            const finalAIMessage = currentMessages.find(msg => msg.id === assistantMessageId);
-            
-            if (finalAIMessage && finalAIMessage.content) {
-              // Create a copy to avoid any state mutation issues
-              const completeAIMessage = {...finalAIMessage};
-              
-              // Save it directly to the database
-              console.log(`[ChatScreen] Saving AI message with content length: ${completeAIMessage.content.length}`);
-              saveMessageToDb(completeAIMessage, currentChatId)
-                .then(() => console.log(`[ChatScreen] Successfully saved completed AI message to DB, id: ${assistantMessageId}`))
-                .catch(err => console.error('[ChatScreen] Error saving final AI message:', err));
-            } else {
-              console.warn(`[ChatScreen] Could not find completed AI message with id: ${assistantMessageId}`);
-            }
-            
-            // Return unchanged messages (this is just using setMessages to access current state)
-            return currentMessages;
-          });
+          const completeMessage = {
+            ...assistantMessage,
+            content: completeContent
+          };
+          
+          await saveMessageToDb(completeMessage, currentChatId);
+          console.log(`[ChatScreen] Successfully saved complete AI message (${completeContent.length} chars) to DB`);
         } catch (error) {
-          console.error('[ChatScreen] Error in final AI message save process:', error);
+          console.error('[ChatScreen] Error saving complete AI message:', error);
         }
       }
+      
+      // Now start the artificial streaming for UI updates
+      let displayedContent = "";
+      
+      // Create artificial chunks like the streaming function does (10-20 chars per chunk)
+      const chunkSize = 15; // Average chunk size
+      const chunks: string[] = [];
+      
+      for (let i = 0; i < completeContent.length; i += chunkSize) {
+        chunks.push(completeContent.slice(i, i + chunkSize));
+      }
+      
+      // Process chunks with delays to simulate streaming
+      for (const chunk of chunks) {
+        // Check if request was aborted
+        if (abortControllerRef.current?.signal.aborted) {
+          break;
+        }
+        
+        // Add a slight delay between chunks
+        await new Promise(resolve => setTimeout(resolve, 30 + Math.random() * 50));
+        
+        // Update displayed content
+        displayedContent += chunk;
+        
+        // Update UI
+        setMessages(prevMessages => {
+          return prevMessages.map(msg => {
+            if (msg.id === assistantMessageId) {
+              return {
+                ...msg,
+                content: displayedContent
+              };
+            }
+            return msg;
+          });
+        });
+        
+        // Scroll to the latest content
+        scrollViewRef.current?.scrollToEnd({ animated: true });
+      }
+      
     } catch (error) {
       console.error('[ChatScreen] Error in API request:', error);
       

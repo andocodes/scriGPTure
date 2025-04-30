@@ -402,9 +402,22 @@ export async function saveMessageToDb(message: Message, chatId: string): Promise
     return;
   }
   
+  // Safety check for empty content (should never happen but just in case)
+  if (!message.content) {
+    console.warn(`[Database Chat] Attempted to save message with empty content for chat ${chatId}`);
+    // We'll still save it, but log the warning
+  }
+  
   const contextJSON = message.context ? JSON.stringify(message.context) : null;
   
   try {
+    // Log the exact data being saved for debugging
+    console.log(`[Database Chat] Saving message ${message.id} for chat ${chatId}:
+      - isUser: ${message.isUser}
+      - timestamp: ${message.timestamp}
+      - content length: ${message.content.length}
+      - content snippet: "${message.content.substring(0, 50)}${message.content.length > 50 ? '...' : ''}"`);
+    
     // Insert/update the message without explicit transaction
     await mainDb.runAsync(
       `INSERT OR REPLACE INTO messages (id, chat_id, content, is_user, timestamp, context)
@@ -418,7 +431,7 @@ export async function saveMessageToDb(message: Message, chatId: string): Promise
       [Date.now(), chatId]
     );
     
-    console.log(`[Database Chat] Saved message ${message.id} for chat ${chatId}`);
+    console.log(`[Database Chat] Successfully saved message ${message.id} for chat ${chatId}`);
   } catch (error) {
     console.error(`[Database Chat] Error saving message:`, error);
     throw error;
@@ -433,6 +446,8 @@ export async function getChatMessagesFromDb(chatId: string): Promise<Message[]> 
   }
   
   try {
+    console.log(`[Database Chat] Retrieving messages for chat ${chatId}`);
+    
     const results = await mainDb.getAllAsync<{
       id: string,
       content: string,
@@ -445,6 +460,29 @@ export async function getChatMessagesFromDb(chatId: string): Promise<Message[]> 
       [chatId]
     );
     
+    // Log the raw query results for debugging
+    console.log(`[Database Chat] Raw query returned ${results.length} messages`);
+    
+    if (results.length > 0) {
+      // Log a sample of the first and last message (if available)
+      const firstMsg = results[0];
+      const lastMsg = results[results.length - 1];
+      
+      console.log(`[Database Chat] First message: 
+        - id: ${firstMsg.id}
+        - is_user: ${firstMsg.is_user}
+        - content length: ${firstMsg.content.length}
+        - content snippet: "${firstMsg.content.substring(0, 50)}${firstMsg.content.length > 50 ? '...' : ''}"`);
+      
+      if (results.length > 1) {
+        console.log(`[Database Chat] Last message: 
+          - id: ${lastMsg.id}
+          - is_user: ${lastMsg.is_user}
+          - content length: ${lastMsg.content.length}
+          - content snippet: "${lastMsg.content.substring(0, 50)}${lastMsg.content.length > 50 ? '...' : ''}"`);
+      }
+    }
+    
     const messages: Message[] = results.map(row => ({
       id: row.id,
       content: row.content,
@@ -453,7 +491,7 @@ export async function getChatMessagesFromDb(chatId: string): Promise<Message[]> 
       context: row.context ? JSON.parse(row.context) : undefined
     }));
     
-    console.log(`[Database Chat] Retrieved ${messages.length} messages for chat ${chatId}`);
+    console.log(`[Database Chat] Retrieved and converted ${messages.length} messages for chat ${chatId}`);
     return messages;
   } catch (error) {
     console.error(`[Database Chat] Error getting messages for chat ${chatId}:`, error);

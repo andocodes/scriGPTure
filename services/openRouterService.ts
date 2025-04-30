@@ -37,7 +37,8 @@ export async function getChatCompletionStream(
   messages: OpenRouterMessage[],
   apiKey: string,
   signal?: AbortSignal,
-  onChunk?: (content: string) => void
+  onChunk?: (content: string) => void,
+  onFullResponse?: (fullContent: string) => void
 ): Promise<ReadableStream<Uint8Array> | null> {
   if (!apiKey) {
     throw new Error('OpenRouter API key is required');
@@ -115,6 +116,15 @@ export async function getChatCompletionStream(
 
     console.log(`[OpenRouter] Complete response received, length: ${content.length} chars`);
     
+    // Call the full response handler immediately if provided
+    if (onFullResponse) {
+      try {
+        onFullResponse(content);
+      } catch (error) {
+        console.error('[OpenRouter] Error in full response handler:', error);
+      }
+    }
+    
     // Create an artificial stream by chunking the response
     return createArtificialStream(content, onChunk);
   } catch (error) {
@@ -163,4 +173,70 @@ function createArtificialStream(
       }
     }
   });
+}
+
+/**
+ * Gets a complete chat completion from OpenRouter without streaming
+ * This is useful when you need the entire response at once
+ */
+export async function getChatCompletion(
+  messages: OpenRouterMessage[],
+  apiKey: string,
+  signal?: AbortSignal
+): Promise<string> {
+  if (!apiKey) {
+    throw new Error('OpenRouter API key is required');
+  }
+
+  // Using deepseek model as confirmed in OpenRouter logs
+  const model = 'deepseek/deepseek-chat-v3-0324:free';
+
+  try {
+    console.log('[OpenRouter] Making API request for complete response...');
+    
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://scrigpture.org',
+        'X-Title': 'ScriGPTure Bible App',
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: false,
+        temperature: 0.7,
+        max_tokens: 1000,
+      }),
+      signal,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
+    }
+
+    // Parse the JSON response
+    let responseData: OpenRouterResponse;
+    try {
+      responseData = await response.json();
+    } catch (error) {
+      console.error('[OpenRouter] Error parsing response JSON:', error);
+      throw new Error('Failed to parse API response');
+    }
+
+    // Get the content from the response
+    const content = responseData.choices[0]?.message?.content || '';
+    if (!content) {
+      throw new Error('No content received from API');
+    }
+
+    console.log(`[OpenRouter] Complete response received, length: ${content.length} chars`);
+    
+    return content;
+  } catch (error) {
+    console.error('Error in getChatCompletion:', error);
+    throw error;
+  }
 } 
