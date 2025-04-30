@@ -1,157 +1,224 @@
 import * as SQLite from 'expo-sqlite';
 import { Platform } from 'react-native';
+import { getLocalDbPath, checkDbExists } from '../services/fileDownloader'; // Import helpers
+import { bookStringToIntId, bookIntToStringId } from '~/config/bookMap'; // Import book ID mappers
 
 // Types should be available from the main import
 type Database = SQLite.SQLiteDatabase;
 
-const DB_NAME = "scripture.db";
 const IS_WEB = Platform.OS === 'web';
+const ATTACH_ALIAS = 'translation'; // Alias for the attached database
 
-let dbInstance: Database | null = null;
+// --- Singleton Main DB Connection (Native Only) ---
+let mainDb: Database | null = null;
+let isMainDbOpen = false;
+let currentlyAttachedDb: string | null = null; // Track the *filename* of the attached DB
 
-async function openDatabase(): Promise<Database | null> {
-  if (IS_WEB) {
-    console.log('SQLite operations are disabled on the web platform.');
-    return null;
+/**
+ * Opens the main (in-memory) database connection if not already open.
+ * This is the connection used for ATTACH/DETACH operations.
+ */
+async function openMainDatabase(): Promise<void> {
+  if (IS_WEB || isMainDbOpen) {
+    return;
   }
-
-  if (dbInstance) {
-    return dbInstance;
-  }
-
+  const mainDbName = "main.db"; // Use a persistent file name
   try {
-    console.log(`Attempting to open database: ${DB_NAME}`);
-    const db = await SQLite.openDatabaseAsync(DB_NAME);
-    console.log('Database opened successfully.');
-    await initializeTables(db);
-    dbInstance = db;
-    return dbInstance;
+    console.log(`[Database] Initializing main persistent database connection (${mainDbName})...`);
+    // Using a named in-memory db can sometimes help with debugging, but :memory: is standard
+    // mainDb = await SQLite.openDatabaseAsync(':memory:'); 
+    mainDb = await SQLite.openDatabaseAsync(mainDbName); // Open the persistent file
+    isMainDbOpen = true;
+    currentlyAttachedDb = null; // Ensure tracker is reset on open
+    console.log(`[Database] Main persistent database (${mainDbName}) opened successfully.`);
   } catch (error) {
-    console.error('Failed to open or initialize database:', error);
-    throw error;
+    console.error(`[Database] Failed to open main persistent database (${mainDbName}):`, error);
+    mainDb = null;
+    isMainDbOpen = false;
+    // Potentially throw or handle this critical error
+    throw new Error("Failed to initialize main database connection.");
   }
 }
 
-async function initializeTables(database: Database): Promise<void> {
-  try {
-    const result = await database.getFirstAsync<{ user_version: number }>( 'PRAGMA user_version' );
-    let currentVersion = result?.user_version ?? 0;
-    console.log(`Current DB version: ${currentVersion}`);
-
-    if (currentVersion < 1) {
-      console.log('Initializing database schema (Version 1)...');
-      // Use execAsync for multiple non-parameterized statements
-      await database.execAsync(`
-        PRAGMA journal_mode = WAL;
-        CREATE TABLE translations (
-          id TEXT PRIMARY KEY NOT NULL,
-          abbreviation TEXT NOT NULL,
-          name TEXT NOT NULL,
-          language TEXT NOT NULL,
-          downloaded INTEGER DEFAULT 0 NOT NULL
-        );
-        CREATE TABLE books (
-          id TEXT PRIMARY KEY NOT NULL,
-          translation_id TEXT NOT NULL,
-          abbreviation TEXT NOT NULL,
-          name TEXT NOT NULL,
-          name_long TEXT,
-          sort_order INTEGER NOT NULL,
-          FOREIGN KEY (translation_id) REFERENCES translations(id) ON DELETE CASCADE
-        );
-        CREATE TABLE chapters (
-          id TEXT PRIMARY KEY NOT NULL,
-          translation_id TEXT NOT NULL,
-          book_id TEXT NOT NULL,
-          reference TEXT NOT NULL,
-          sort_order INTEGER NOT NULL,
-          FOREIGN KEY (translation_id) REFERENCES translations(id) ON DELETE CASCADE,
-          FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
-        );
-        CREATE TABLE verses (
-          id TEXT PRIMARY KEY NOT NULL,
-          translation_id TEXT NOT NULL,
-          book_id TEXT NOT NULL,
-          chapter_id TEXT NOT NULL,
-          verse_number TEXT NOT NULL,
-          content TEXT NOT NULL,
-          sort_order INTEGER NOT NULL,
-          FOREIGN KEY (translation_id) REFERENCES translations(id) ON DELETE CASCADE,
-          FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
-          FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE
-        );
-        CREATE INDEX idx_books_translation ON books(translation_id);
-        CREATE INDEX idx_chapters_book ON chapters(book_id);
-        CREATE INDEX idx_verses_chapter ON verses(chapter_id);
-        PRAGMA user_version = 1;
-      `);
-      console.log('Schema version 1 initialized.');
-    }
-    // Add future migrations using `if (currentVersion < X) { ... PRAGMA user_version = X; }`
-  } catch (error) {
-    console.error('Error during table initialization:', error);
-    throw error;
-  }
+// Initialize main DB on module load (async, non-blocking)
+if (!IS_WEB) {
+    openMainDatabase().catch(error => {
+        console.error("[Database] Background initialization of main DB failed:", error);
+        // App might be in a bad state here if this fails
+    });
 }
 
-// --- Database Operation Helpers ---
-
-/** Gets the singleton database instance, opening it if necessary. */
-async function getDb(): Promise<Database | null> {
-    if (IS_WEB) return null;
-    if (!dbInstance) {
-        return await openDatabase();
-    }
-    return dbInstance;
-}
-
-/** Executes a single SQL statement (INSERT, UPDATE, DELETE) */
-async function run(sql: string, params: SQLite.SQLiteBindParams = []): Promise<SQLite.SQLiteRunResult> {
-    if (IS_WEB) return { changes: 0, lastInsertRowId: 0 };
-    const db = await getDb();
-    if (!db) return { changes: 0, lastInsertRowId: 0 };
-    return await db.runAsync(sql, params);
-}
-
-/** Executes a SELECT statement and returns the first row */
-async function get<T>(sql: string, params: SQLite.SQLiteBindParams = []): Promise<T | null> {
-    if (IS_WEB) return null;
-    const db = await getDb();
-    if (!db) return null;
-    const result = await db.getFirstAsync<T>(sql, params);
-    return result ?? null;
-}
-
-/** Executes a SELECT statement and returns all rows */
-async function all<T>(sql: string, params: SQLite.SQLiteBindParams = []): Promise<T[]> {
-    if (IS_WEB) return [];
-    const db = await getDb();
-    if (!db) return [];
-    return await db.getAllAsync<T>(sql, params);
-}
-
-/** Executes multiple SQL statements non-transactionally */
-async function exec(sql: string): Promise<void> {
-    if (IS_WEB) return;
-    const db = await getDb();
-    if (!db) return;
-    await db.execAsync(sql);
-}
-
-/** Executes an async function within a database transaction */
-async function withTransaction(task: () => Promise<void>): Promise<void> {
+/**
+ * Switches the active database by DETACHing the old one (if any)
+ * and ATTACHing the new one using the main connection.
+ * @param dbFileName - The name of the database file to activate, or null to detach.
+ */
+export async function switchActiveDatabase(dbFileName: string | null): Promise<boolean> {
     if (IS_WEB) {
-        await task();
-        return;
+        console.warn("[Database] switchActiveDatabase called on web, returning false.");
+        return false; // ATTACH/DETACH not supported on web
     }
-    const db = await getDb();
-    if (!db) {
-        console.warn("Attempted transaction without DB connection");
-        await task();
-        return;
+    
+    // Ensure main DB is open (should be quick if already open)
+    await openMainDatabase(); 
+    if (!mainDb) {
+        console.error("[Database] Cannot switch, main DB connection failed to open.");
+        return false;
     }
-    await db.withTransactionAsync(task);
+
+    // 1. Detach currently attached DB if necessary
+    if (currentlyAttachedDb) {
+        console.log(`[Database] Detaching currently attached DB: ${currentlyAttachedDb} (Alias: ${ATTACH_ALIAS})`);
+        try {
+            await mainDb.execAsync(`DETACH DATABASE ${ATTACH_ALIAS};`);
+            console.log(`[Database] Detach successful for alias ${ATTACH_ALIAS}.`);
+            currentlyAttachedDb = null;
+        } catch (detachError) {
+            console.error(`[Database] Error detaching database ${ATTACH_ALIAS}:`, detachError);
+            // Don't necessarily stop here, maybe the attach will still work if detach failed weirdly?
+            // Or should we return false? For now, log and continue.
+            currentlyAttachedDb = null; // Assume detached even on error to allow attach attempt
+        }
+    }
+
+    // 2. Attach new DB if a filename is provided
+    if (dbFileName) {
+        const localPathUri = getLocalDbPath(dbFileName); // Path with file:// prefix
+        // For the native ATTACH command, try using the path without the file:// prefix
+        const absolutePosixPath = localPathUri.replace(/^file:\/\//, ''); 
+        
+        console.log(`[Database] Attaching DB: ${absolutePosixPath} AS ${ATTACH_ALIAS} (using POSIX path)`);
+        // Check if file exists before attempting attach
+        if (!(await checkDbExists(dbFileName))) {
+            console.error(`[Database] Cannot attach, file does not exist: ${localPathUri}`);
+            return false; // Cannot attach non-existent file
+        }
+
+        try {
+            // NOTE: File paths in ATTACH need to be properly quoted/escaped if they contain special chars.
+            // Using the path without file:// prefix
+            await mainDb.execAsync(`ATTACH DATABASE '${absolutePosixPath}' AS ${ATTACH_ALIAS};`);
+            currentlyAttachedDb = dbFileName; // Track the filename
+            console.log(`[Database] Attach successful: ${dbFileName} AS ${ATTACH_ALIAS}`);
+            // Optional: Verify attachment
+            // const dbs = await mainDb.getAllAsync('PRAGMA database_list;');
+            // console.log('[Database] PRAGMA database_list:', dbs);
+            return true; // Successfully attached
+        } catch (attachError) {
+            console.error(`[Database] Error attaching database ${absolutePosixPath} AS ${ATTACH_ALIAS}:`, attachError);
+            currentlyAttachedDb = null; // Ensure tracker is null on failure
+            return false; // Attach failed
+        }
+    }
+
+    // If dbFileName was null, we only needed to detach, which we did (or attempted).
+    // Return true indicating the desired state (nothing attached) is achieved.
+    return true; 
 }
 
-// Export the core functions needed externally
-export { openDatabase, run, get, all, exec, withTransaction }; 
+// --- Refactored Read Operation Helpers (Use mainDb) ---
+
+async function performGetAll<T>(sql: string, params: SQLite.SQLiteBindParams = []): Promise<T[]> {
+    // Remove expectedDbName parameter and check
+    if (IS_WEB || !mainDb) {
+        console.warn(`[Database] performGetAll called but no active DB connection.`);
+        return [];
+    }
+    // Add check: Ensure a translation DB is actually attached before querying
+    if (!currentlyAttachedDb) {
+        console.warn(`[Database] performGetAll called but no translation DB is attached.`);
+        // Throw an error instead of returning empty? This indicates a logic error.
+        throw new Error("Query attempted while no translation database was attached.");
+        // return []; 
+    }
+    
+    try {
+        // Log without DB name, as it's always the main connection now
+        // console.log(`[Database] performGetAll: Executing query: ${sql.substring(0, 100)}...`);
+        return await mainDb.getAllAsync<T>(sql, params);
+    } catch (error) {
+        console.error(`[Database] Error in performGetAll():`, error);
+        throw error;
+    } 
+}
+
+// performGet would be similar if needed
+
+// --- Specific Query Functions (Rely on activeDb) ---
+
+interface ScrollmapperBook {
+    id: number; // Integer ID from DB
+    name: string;
+}
+
+export interface AppBook {
+    id: string; // Standard string ID (e.g., 'GEN')
+    name: string;
+}
+
+/** Fetches books for the currently active translation */
+async function getBooksInternal(abbr: string): Promise<AppBook[]> {
+    // Removed !mainDb check, performGetAll handles it
+    // Construct table name based on convention
+    const booksTable = `${abbr}_books`; 
+    // Add alias prefix to table name in query, using standard SQL quoting
+    const sql = `SELECT id, name FROM "${ATTACH_ALIAS}"."${booksTable}" ORDER BY id ASC`;
+    console.log(`[Database] Executing getBooksInternal SQL: ${sql}`); // Log the generated SQL
+    const results = await performGetAll<{id: number, name: string}>(sql); 
+    
+    return results.map(book => ({
+        id: bookIntToStringId[book.id] ?? `UNKNOWN_${book.id}`, 
+        name: book.name
+    }));
+}
+
+/** Fetches distinct chapter numbers for the active translation's book */
+async function getChaptersInternal(abbr: string, bookStringId: string): Promise<number[]> {
+    // Removed !mainDb check
+    // Construct table name based on convention
+    const versesTable = `${abbr}_verses`; 
+    const bookIntId = bookStringToIntId[bookStringId];
+    if (bookIntId === undefined) {
+        console.error(`[Database] Invalid book string ID: ${bookStringId}`);
+        return [];
+    }
+    // Add alias prefix to table name in query, using standard SQL quoting
+    const sql = `SELECT DISTINCT chapter FROM "${ATTACH_ALIAS}"."${versesTable}" WHERE book_id = ? ORDER BY chapter ASC`;
+    console.log(`[Database] Executing getChaptersInternal SQL: ${sql}`); // Log the generated SQL
+    const results = await performGetAll<{ chapter: number }>(sql, [bookIntId]);
+    return results.map(row => row.chapter);
+}
+
+export interface Verse {
+    verse: number;
+    text: string;
+}
+
+/** Fetches verses for the active translation's book/chapter */
+async function getVersesInternal(abbr: string, bookStringId: string, chapter: number): Promise<Verse[]> {
+     // Removed !mainDb check
+     // Construct table name based on convention
+     const versesTable = `${abbr}_verses`; 
+    const bookIntId = bookStringToIntId[bookStringId];
+    if (bookIntId === undefined) {
+        console.error(`[Database] Invalid book string ID: ${bookStringId}`);
+        return [];
+    }
+    // Add alias prefix to table name in query, using standard SQL quoting
+    const sql = `SELECT verse, text FROM "${ATTACH_ALIAS}"."${versesTable}" WHERE book_id = ? AND chapter = ? ORDER BY verse ASC`;
+    console.log(`[Database] Executing getVersesInternal SQL: ${sql}`); // Log the generated SQL
+    return await performGetAll<Verse>(sql, [bookIntId, chapter]);
+}
+
+// Note: `run`, `exec`, `withTransaction` are removed for now as this focuses on reads from pre-built DBs.
+// If write operations are needed later (e.g., for user notes), they would need careful re-implementation 
+// possibly using a separate database file to avoid modifying the downloaded translation dbs.
+
+// Export the public API
+export {
+    // switchActiveDatabase, // Removed: Already exported at definition
+    getBooksInternal as getBooks,
+    getChaptersInternal as getChapters,
+    getVersesInternal as getVerses,
+    // Types are exported at definition
+}; 

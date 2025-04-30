@@ -1,46 +1,59 @@
 import { create, StateCreator } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage'; // Import AsyncStorage
 import { loadApiKeys as loadKeysFromSecureStore } from '~/utils/apiKeyManager';
-import { type ApiBibleTranslation } from '~/services/apiBible'; // Assuming interface is exported
-import * as db from '~/db/database'; // Import db helpers
+// Remove API Bible specific imports
+// import { type ApiBibleTranslation } from '~/services/apiBible';
+// import { fetchAvailableTranslations } from '~/services/apiBible'; 
 import { Platform } from 'react-native'; // Import Platform
-import { fetchAvailableTranslations } from '~/services/apiBible'; // Import the function
+import { listDownloadedDbs } from '../services/fileDownloader'; // Import file system helper
+import { scrollmapperTranslationMap, type ScrollmapperTranslationInfo } from '~/config/translationMap'; // Import our map
+import { switchActiveDatabase } from '~/db/database'; // Import database switching function
 
 const IS_WEB = Platform.OS === 'web';
 const SELECTED_TRANSLATION_KEY = 'selectedTranslationId';
-const DEFAULT_TRANSLATION_ID = 'de4e12af7f28f599-01'; // KJV as a fallback
+// Use the scrollmapper abbr as default ID now
+const DEFAULT_TRANSLATION_ID = 'KJV'; 
 
 // Define the state structure
 export interface AppState {
   // API Keys
   openRouterApiKey: string | null;
-  apiBibleApiKey: string | null;
+  // Keep apiBibleApiKey for potential web use or future re-integration
+  apiBibleApiKey: string | null; 
   apiKeysLoaded: boolean;
   apiKeysError: string | null;
 
   // Bible Data & Navigation
-  availableTranslations: ApiBibleTranslation[]; // Translations available from API
-  downloadedTranslationIds: string[]; // IDs of translations stored locally
-  selectedTranslationId: string | null; // ID of the currently active translation
+  // Use our Scrollmapper type
+  availableTranslations: ScrollmapperTranslationInfo[]; 
+  downloadedTranslationIds: string[]; // IDs (abbr) of translations with downloaded .db files
+  selectedTranslationId: string | null; // ID (abbr) of the currently active translation
   currentBookId: string | null; // e.g., 'GEN'
-  currentChapterId: string | null; // e.g., 'GEN.1'
+  // Chapter ID will likely become chapter number based on DB refactor
+  currentChapterNumber: number | null; // e.g., 1 
   // Add more navigation state as needed (e.g., currentVerseId, scroll position)
 
   // Status
   isDownloading: boolean;
-  downloadingTranslationId: string | null; // Added: ID of the translation being downloaded
+  downloadingTranslationId: string | null; // ID (abbr) of the translation being downloaded
   downloadProgress: number; // e.g., 0-1
   downloadError: string | null;
+  // --- Add DB Status ---
+  isDbReady: boolean; // Flag to indicate if the active DB matches the selected ID and is ready
 
   // Actions (functions to modify state)
   loadApiKeys: () => Promise<void>;
-  setAvailableTranslations: (translations: ApiBibleTranslation[]) => void;
+  // Update type for setting available translations
+  setAvailableTranslations: (translations: ScrollmapperTranslationInfo[]) => void; 
   addDownloadedTranslation: (translationId: string) => void;
-  setSelectedTranslation: (translationId: string) => Promise<void>;
-  setCurrentLocation: (bookId: string, chapterId: string) => void;
+  // Add action to remove a downloaded translation
+  removeDownloadedTranslation: (translationId: string) => void;
+  setSelectedTranslation: (translationId: string | null) => Promise<void>; // Allow setting to null
+  // Update location setting
+  setCurrentLocation: (bookId: string, chapterNumber: number | null) => void; 
   setDownloadStatus: (isDownloading: boolean, translationId?: string | null, progress?: number, error?: string | null) => void;
   clearDownloadStatus: () => void;
-  // Add more actions as needed
+  initializeStore: () => Promise<void>; // Add initializeStore to actions
 }
 
 // Define the creator function with the explicit type
@@ -50,24 +63,31 @@ const createAppState: StateCreator<AppState> = (set, get) => ({
   apiBibleApiKey: null,
   apiKeysLoaded: false,
   apiKeysError: null,
-  availableTranslations: [],
-  downloadedTranslationIds: [], // Should potentially be loaded from DB on init
-  selectedTranslationId: null, // Should be loaded from DB/settings or default
-  currentBookId: null, // Default to Genesis?
-  currentChapterId: null, // Default to Gen 1?
+  // Initialize with the map from config
+  availableTranslations: scrollmapperTranslationMap, 
+  downloadedTranslationIds: [], // Will be loaded by initializeStore
+  selectedTranslationId: null, // Will be loaded by initializeStore
+  currentBookId: null,
+  currentChapterNumber: null, // Changed from chapterId
   isDownloading: false,
-  downloadingTranslationId: null, // Added initial state
+  downloadingTranslationId: null,
   downloadProgress: 0,
   downloadError: null,
+  // --- Init DB Status ---
+  isDbReady: false, // Start as not ready
 
   // Actions Implementation
   loadApiKeys: async () => {
+    console.log("[Store loadApiKeys] Attempting to load keys...");
     try {
       set({ apiKeysLoaded: false, apiKeysError: null });
+      console.log("[Store loadApiKeys] Calling loadKeysFromSecureStore...");
       const { openRouterKey, apiBibleKey } = await loadKeysFromSecureStore();
+      console.log(`[Store loadApiKeys] Loaded keys: OpenRouter=${!!openRouterKey}, ApiBible=${!!apiBibleKey}`);
       set({ openRouterApiKey: openRouterKey, apiBibleApiKey: apiBibleKey, apiKeysLoaded: true });
+      console.log("[Store loadApiKeys] State updated successfully.");
     } catch (error) {
-      console.error("Error loading API keys into store:", error);
+      console.error("[Store loadApiKeys] Error loading API keys into store:", error);
       set({ apiKeysError: error instanceof Error ? error.message : String(error), apiKeysLoaded: false });
     }
   },
@@ -76,103 +96,227 @@ const createAppState: StateCreator<AppState> = (set, get) => ({
 
   addDownloadedTranslation: (translationId) => {
     if (!get().downloadedTranslationIds.includes(translationId)) {
+      console.log(`[Store] Adding downloaded translation ID: ${translationId}`);
       set(state => ({
         downloadedTranslationIds: [...state.downloadedTranslationIds, translationId],
       }));
+    } else {
+      console.log(`[Store] Translation ID ${translationId} already in downloaded list.`);
+    }
+  },
+  
+  removeDownloadedTranslation: (translationId) => {
+      console.log(`[Store] Removing downloaded translation ID: ${translationId}`);
+      set(state => ({
+        downloadedTranslationIds: state.downloadedTranslationIds.filter(id => id !== translationId),
+        // If the removed one was selected, reset selection
+        selectedTranslationId: state.selectedTranslationId === translationId ? null : state.selectedTranslationId,
+      }));
+      // Persist the new potentially null selection
+      const newSelectedId = get().selectedTranslationId;
+      AsyncStorage.setItem(SELECTED_TRANSLATION_KEY, newSelectedId ?? '').catch(e => console.error("Error saving cleared selected translation:", e));
+  },
+
+  // Allow setting null, store empty string if null
+  setSelectedTranslation: async (translationId) => { 
+    const currentId = get().selectedTranslationId;
+    if (currentId !== translationId) {
+        console.log(`[Store] Setting selected translation ID: ${translationId}`);
+        // Set ID immediately, but mark DB as not ready until switch completes
+        set({ selectedTranslationId: translationId, isDbReady: false }); 
+        let success = false;
+        try {
+            await AsyncStorage.setItem(SELECTED_TRANSLATION_KEY, translationId ?? '');
+
+            // --- Switch active database ---
+            const state = get(); // Get updated state
+            let dbFileName: string | null = null;
+            if (translationId) {
+                dbFileName = state.availableTranslations.find(t => t.id === translationId)?.dbFileName ?? null;
+                if (!dbFileName) {
+                    console.warn(`[Store] Could not find dbFileName for selected translation ID: ${translationId}`);
+                    // Cannot switch if no filename, so DB is not ready
+                }
+            }
+            console.log(`[Store] Switching active database to: ${dbFileName ?? 'none'}`);
+            success = await switchActiveDatabase(dbFileName); // Pass null if translationId is null
+            console.log(`[Store] switchActiveDatabase result: ${success}`);
+            // --- End switch active database ---
+
+        } catch (error) {
+            // Catch errors from both AsyncStorage and switchActiveDatabase
+            console.error(`[Store] Error during setSelectedTranslation for ID ${translationId}:`, error);
+            success = false; // Ensure success is false on error
+        } finally {
+            // Update db readiness based on the final success status
+            set({ isDbReady: success });
+            console.log(`[Store] Final DB readiness set to: ${success}`);
+        }
     }
   },
 
-  setSelectedTranslation: async (translationId) => {
-    set({ selectedTranslationId: translationId });
-    try {
-      await AsyncStorage.setItem(SELECTED_TRANSLATION_KEY, translationId);
-    } catch (error) {
-      console.error("Error saving selected translation:", error);
-    }
-  },
-
-  setCurrentLocation: (bookId, chapterId) => set({ currentBookId: bookId, currentChapterId: chapterId }),
+  setCurrentLocation: (bookId, chapterNumber) => set({ currentBookId: bookId, currentChapterNumber: chapterNumber }),
 
   setDownloadStatus: (isDownloading, translationId = null, progress = 0, error = null) => {
+    // Prevent setting progress to 1 unless download is finishing
+    const effectiveProgress = (isDownloading && progress < 1) ? progress : (isDownloading ? get().downloadProgress : progress); 
     set({
       isDownloading,
-      downloadingTranslationId: isDownloading ? translationId : null,
-      downloadProgress: isDownloading ? progress : 0,
-      downloadError: isDownloading ? error : null,
+      // Keep ID if finishing with error, clear otherwise if not downloading
+      downloadingTranslationId: isDownloading ? translationId : (error ? translationId : null), 
+      downloadProgress: effectiveProgress,
+      downloadError: error,
     });
   },
 
   clearDownloadStatus: () => set({
       isDownloading: false,
-      downloadingTranslationId: null, // Clear ID as well
+      downloadingTranslationId: null,
       downloadProgress: 0,
       downloadError: null
   }),
+
+  // --- Refactored initializeStore ---
+  initializeStore: async () => {
+    console.log("[Store Initialize] Starting..."); // Changed prefix for consistency
+    // Reset DB ready status at the beginning
+    set({ isDbReady: false });
+    
+    // 1. Load API Keys (still needed for OpenRouter)
+    try {
+      console.log("[Store Initialize] Attempting to load API keys...");
+      await get().loadApiKeys(); 
+      console.log("[Store Initialize] API keys loaded successfully (or already loaded).");
+    } catch (error) {
+      console.error("[Store Initialize] CRITICAL: Error during loadApiKeys! Initialization might be incomplete.", error);
+      // Decide if we should stop initialization here? For now, continue...
+      // Optionally set an error state in the store?
+    }
+
+    // 2. Load persisted selected translation ID
+    console.log("[Store Initialize] Loading selectedTranslationId...");
+    let storedSelectedId: string | null = null;
+    try {
+        storedSelectedId = await AsyncStorage.getItem(SELECTED_TRANSLATION_KEY);
+        // Handle empty string case from previous save
+        if (storedSelectedId === '') storedSelectedId = null; 
+        console.log(`[Store Initialize] Loaded storedSelectedId from AsyncStorage: '${storedSelectedId}'`);
+    } catch (e) {
+        console.error("[Store Initialize] Failed to load selected translation ID from AsyncStorage", e);
+    }
+
+    // 3. Load downloaded translations from File System (Native Only)
+    let actualDownloadedIds: string[] = [];
+    const availableTranslations = get().availableTranslations; // Get map early for use
+    if (!IS_WEB) {
+        try {
+            const downloadedFiles = await listDownloadedDbs(); // e.g., ["KJV.db", "ASV.db"]
+            console.log("[Store] Found downloaded DB files:", downloadedFiles);
+            // Map filenames back to translation IDs (abbr)
+            const fileAbbrMap = new Map(availableTranslations.map(t => [t.dbFileName, t.id]));
+            actualDownloadedIds = downloadedFiles
+                .map(filename => fileAbbrMap.get(filename))
+                .filter((id): id is string => !!id); // Filter out undefined/null IDs
+        } catch (e) {
+            console.error("[Store Initialize] Failed to list downloaded translations from file system", e);
+        }
+    }
+    console.log(`[Store Initialize] Determined actualDownloadedIds: [${actualDownloadedIds.join(', ')}]`);
+
+    // 4. Validate selected ID and determine initial selection
+    let validatedSelectedId: string | null = null;
+    const availableIds = availableTranslations.map(t => t.id);
+
+    // 1. Check stored ID validity against actual downloads (native) or availability (web)
+    if (storedSelectedId) {
+        const isValid = IS_WEB 
+            ? availableIds.includes(storedSelectedId) 
+            : actualDownloadedIds.includes(storedSelectedId);
+        console.log(`[Store Initialize] Checking validity of stored ID '${storedSelectedId}': ${isValid}`);
+            
+        if (isValid) {
+            validatedSelectedId = storedSelectedId;
+            console.log(`[Store] Using valid stored selected ID: ${validatedSelectedId}`);
+        } else {
+            console.warn(`[Store] Stored selected ID '${storedSelectedId}' is no longer valid (not downloaded/available). Resetting.`);
+            // Clear invalid stored ID
+            AsyncStorage.removeItem(SELECTED_TRANSLATION_KEY).catch(e => console.error("Error removing invalid selected translation:", e));
+        }
+    }
+
+    // 2. Fallback to first downloaded (Native only) if no valid stored ID
+    if (!validatedSelectedId && !IS_WEB && actualDownloadedIds.length > 0) {
+        validatedSelectedId = actualDownloadedIds[0];
+        console.log(`[Store] No valid stored ID, falling back to first downloaded: ${validatedSelectedId}`);
+        // Persist this fallback selection
+        AsyncStorage.setItem(SELECTED_TRANSLATION_KEY, validatedSelectedId).catch(e => console.error("Error saving fallback selected translation:", e));
+    }
+    
+    // 3. Fallback to default (KJV) if available (Web or Native) and still no selection
+    if (!validatedSelectedId && availableIds.includes(DEFAULT_TRANSLATION_ID)) {
+         // On native, only select KJV if it's actually downloaded
+        const kjvIsAvailable = IS_WEB || actualDownloadedIds.includes(DEFAULT_TRANSLATION_ID);
+        if (kjvIsAvailable) {
+            validatedSelectedId = DEFAULT_TRANSLATION_ID;
+            console.log(`[Store] No valid stored/downloaded ID, falling back to default ${DEFAULT_TRANSLATION_ID}`);
+            // Persist this fallback selection
+            AsyncStorage.setItem(SELECTED_TRANSLATION_KEY, validatedSelectedId).catch(e => console.error("Error saving default selected translation:", e));
+        } else {
+             console.log(`[Store] Default ${DEFAULT_TRANSLATION_ID} is available but not downloaded, cannot select.`);
+        }
+    }
+
+    console.log(`[Store Initialize] Final validatedSelectedId before setting state: '${validatedSelectedId}'`);
+
+    // 5. Set final initial state
+    console.log(`[Store Initialize] Setting final initial state - Selected ID: ${validatedSelectedId}, Downloaded IDs: ${actualDownloadedIds.join(', ')}`);
+    set({
+      selectedTranslationId: validatedSelectedId,
+      downloadedTranslationIds: actualDownloadedIds,
+      // Reset any potential leftover download state
+      isDownloading: false, 
+      downloadingTranslationId: null,
+      downloadProgress: 0,
+      downloadError: null,
+    });
+
+    // 6. Switch to the initially selected database
+    let success = false;
+    try {
+      let initialDbFileName: string | null = null;
+      if (validatedSelectedId) {
+          initialDbFileName = availableTranslations.find(t => t.id === validatedSelectedId)?.dbFileName ?? null;
+          if (!initialDbFileName) {
+              console.warn(`[Store Initialize] Could not find dbFileName for initial selected translation ID: ${validatedSelectedId}`);
+          }
+      }
+      console.log(`[Store Initialize] Initializing active database with filename: ${initialDbFileName ?? 'none'}`);
+      success = await switchActiveDatabase(initialDbFileName); // Pass null if validatedSelectedId is null
+      console.log(`[Store] Initial switchActiveDatabase result: ${success}`);
+    } catch (error) {
+        console.error(`[Store] Error initializing active database for ID ${validatedSelectedId}:`, error);
+        success = false;
+        // Handle error - perhaps clear selection?
+        set({ selectedTranslationId: null }); 
+        AsyncStorage.removeItem(SELECTED_TRANSLATION_KEY).catch(e => console.error("Error clearing selected translation after DB init failure:", e));
+        // Attempt to switch to null to ensure connection is closed
+        try {
+            await switchActiveDatabase(null); 
+        } catch (closeError) {
+            console.error("[Store] Error trying to close DB after init failure:", closeError);
+        }
+    } finally {
+        // Update db readiness based on the final success status
+        set({ isDbReady: success });
+        console.log(`[Store] Initial DB readiness set to: ${success}`);
+    }
+
+    console.log("[Store] Initialization complete.");
+  },
 });
 
 // Create the Zustand store by invoking the result of create<AppState>()
 export const useAppStore = create<AppState>()(createAppState);
 
-// Optional: Function to initialize parts of the store (e.g., loading keys, saved preferences)
-// This could be called once when the app loads (e.g., in RootLayout)
-export const initializeStore = async () => {
-  console.log("Initializing store state...");
-  // 1. Load API Keys
-  await useAppStore.getState().loadApiKeys();
-  
-  // Ensure API keys are loaded AND valid before proceeding
-  const { apiBibleApiKey, setAvailableTranslations } = useAppStore.getState();
-  if (!apiBibleApiKey) {
-    console.warn("Store initialized but API Bible key is missing. Cannot load translations.");
-    // Set defaults without translations
-    // (Existing logic below handles loading selectedId/downloadedIds)
-  } else {
-    // 1.5 Fetch Available Translations if API key exists
-    try {
-      console.log("Fetching available translations during init...");
-      const translations = await fetchAvailableTranslations(); // Use the function from apiBible service
-      setAvailableTranslations(translations);
-      console.log(`Loaded ${translations.length} available translations.`);
-    } catch (e) {
-      console.error("Failed to load available translations during init:", e);
-      // Proceed without translations if fetch fails?
-    }
-  }
-
-  // 2. Load persisted preferences (selected translation)
-  let storedSelectedId: string | null = null;
-  try {
-      storedSelectedId = await AsyncStorage.getItem(SELECTED_TRANSLATION_KEY);
-  } catch (e) {
-      console.error("Failed to load selected translation ID from AsyncStorage", e);
-  }
-
-  // 3. Load downloaded translations (Native Only)
-  let downloadedIds: string[] = [];
-  if (!IS_WEB) {
-      try {
-          const downloaded = await db.all<{ id: string }>(
-              "SELECT id FROM translations WHERE downloaded = 1"
-          );
-          downloadedIds = downloaded.map(t => t.id);
-      } catch (e) {
-          console.error("Failed to load downloaded translations from DB", e);
-          // Proceed without downloaded list if DB fails initially?
-      }
-  }
-
-  // 4. Set initial state based on loaded data
-  useAppStore.setState(state => {
-      const initialSelectedId = storedSelectedId ?? 
-                               (downloadedIds.length > 0 ? downloadedIds[0] : DEFAULT_TRANSLATION_ID);
-      return {
-          ...state, // Keep existing state like API keys
-          downloadedTranslationIds: downloadedIds,
-          selectedTranslationId: initialSelectedId,
-      };
-  });
-
-  console.log(`Store initialized. Selected ID: ${useAppStore.getState().selectedTranslationId}`);
-  console.log(`Downloaded IDs: ${JSON.stringify(useAppStore.getState().downloadedTranslationIds)}`);
-  // TODO: Load last location (book/chapter) from AsyncStorage/DB
-}; 
+// Export initializeStore separately if called from RootLayout
+// export const initializeStore = useAppStore.getState().initializeStore; 

@@ -19,6 +19,8 @@ export async function loadApiKeys(): Promise<{ openRouterKey: string | null; api
   try {
     const openRouterKey = await SecureStore.getItemAsync(OPENROUTER_KEY_NAME);
     const apiBibleKey = await SecureStore.getItemAsync(APIBIBLE_KEY_NAME);
+    console.log(`[apiKeyManager] Loaded API Bible Key: ${apiBibleKey ? '***' + apiBibleKey.slice(-4) : 'null'}`);
+    console.log(`[apiKeyManager] Loaded OpenRouter Key: ${openRouterKey ? '***' + openRouterKey.slice(-4) : 'null'}`);
     return { openRouterKey, apiBibleKey };
   } catch (error) {
     console.error('Error loading API keys:', error);

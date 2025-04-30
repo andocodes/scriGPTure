@@ -155,7 +155,7 @@ export async function fetchVersesForChapter(translationId: string, chapterId: st
     const apiKey = await getApiKey();
     try {
         const params = {
-            'content-type': 'text',
+            'content-type': 'html',
             'include-notes': 'false',
             'include-titles': 'true',
             'include-chapter-numbers': 'false',

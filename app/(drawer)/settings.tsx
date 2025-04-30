@@ -1,168 +1,172 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, FlatList, ActivityIndicator, Pressable, StyleSheet, Platform, Alert, TextInput } from 'react-native';
+import React, { useState, useMemo } from 'react';
+import { View, Text, FlatList, ActivityIndicator, Pressable, StyleSheet, Platform, Alert, TextInput, TouchableOpacity } from 'react-native';
 import { Stack } from 'expo-router';
 
 import { Container } from '~/components/Container';
 import { useAppStore } from '~/store/store';
-import { fetchAvailableTranslations, downloadAndStoreTranslation, type ApiBibleTranslation } from '~/services/apiBible';
-import * as db from '~/db/database';
+// Import new services and config
+import { type ScrollmapperTranslationInfo } from '~/config/translationMap';
+import { downloadDbFile, deleteDbFile, checkDbExists } from '~/services/fileDownloader';
+
+// Remove old imports
+// import { fetchAvailableTranslations, downloadAndStoreTranslation, type ApiBibleTranslation } from '~/services/apiBible';
+// import * as db from '~/db/database';
 
 const IS_WEB = Platform.OS === 'web';
 
-interface DisplayTranslation extends ApiBibleTranslation {
+// Interface is simpler now, mainly for type clarity in the component
+interface DisplayTranslation extends ScrollmapperTranslationInfo {
     isDownloaded: boolean;
     isActive: boolean;
 }
 
 export default function SettingsScreen() {
-    const apiKeysLoaded = useAppStore((state) => state.apiKeysLoaded);
-    const apiBibleApiKey = useAppStore((state) => state.apiBibleApiKey);
-    const setAvailableTranslations = useAppStore((state) => state.setAvailableTranslations);
-    const selectedTranslationId = useAppStore((state) => state.selectedTranslationId);
+    // Get state from Zustand store
+    const apiKeysLoaded = useAppStore((state) => state.apiKeysLoaded); // Still needed for OpenRouter check?
+    const availableTranslations = useAppStore((state) => state.availableTranslations); // Now uses Scrollmapper map
+    const selectedTranslationId = useAppStore((state) => state.selectedTranslationId); // Is the abbr
     const setSelectedTranslation = useAppStore((state) => state.setSelectedTranslation);
-    // Select download status individually
     const isDownloading = useAppStore(state => state.isDownloading);
     const downloadProgress = useAppStore(state => state.downloadProgress);
     const downloadError = useAppStore(state => state.downloadError);
-    const downloadingTranslationId = useAppStore(state => state.downloadingTranslationId);
-    const downloadedTranslationIds = useAppStore(state => state.downloadedTranslationIds); // Get downloaded IDs
+    const downloadingTranslationId = useAppStore(state => state.downloadingTranslationId); // Is the abbr
+    const downloadedTranslationIds = useAppStore(state => state.downloadedTranslationIds); // Array of abbrs
+    const removeDownloadedTranslation = useAppStore(state => state.removeDownloadedTranslation); // Action
 
-    const [displayList, setDisplayList] = useState<DisplayTranslation[]>([]);
-    const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    // Local component state
+    // const [isLoading, setIsLoading] = useState(false); // Maybe needed for delete?
+    const [error, setError] = useState<string | null>(null); // For local errors if any
     const [searchTerm, setSearchTerm] = useState('');
 
-    const loadData = useCallback(async () => {
-        if (!apiKeysLoaded) {
-            setError(null); // Don't show key error until keys are loaded
-            setDisplayList([]);
-            setIsLoading(false);
-            return;
-        }
-        if (!apiBibleApiKey) {
-            setError("API.Bible key not configured.");
-            setDisplayList([]);
-            setIsLoading(false);
-            return;
-        }
-
-        setIsLoading(true);
-        setError(null);
-        try {
-            const apiTranslations = await fetchAvailableTranslations();
-            
-            // --- De-duplication Logic Start (by Name) ---
-            const uniqueNameTranslations: ApiBibleTranslation[] = [];
-            const seenNames = new Set<string>(); // Track seen translation names
-            for (const translation of apiTranslations) {
-                if (!seenNames.has(translation.name)) { // Check translation name
-                    uniqueNameTranslations.push(translation);
-                    seenNames.add(translation.name); // Add translation name to set
-                }
-            }
-            // --- De-duplication Logic End ---
-
-            // Use the unique list for further processing
-            setAvailableTranslations(uniqueNameTranslations); 
-
-            let downloadedIds = new Set<string>();
-            if (!IS_WEB) { // Only check DB on native
-                const downloaded = await db.all<{ id: string }>(
-                    "SELECT id FROM translations WHERE downloaded = 1"
-                );
-                downloadedIds = new Set(downloaded.map(t => t.id));
-            }
-            
-            // On web, assume nothing is downloaded unless we implement web storage later
-            const combinedList = uniqueNameTranslations.map(apiT => ({
-                ...apiT,
-                // On web, isDownloaded is always false for now
-                isDownloaded: IS_WEB ? false : downloadedIds.has(apiT.id),
-                isActive: apiT.id === selectedTranslationId,
-            }));
-            setDisplayList(combinedList);
-
-        } catch (err) {
-            console.error("Error loading translations data:", err);
-            setError(err instanceof Error ? err.message : "Failed to load data");
-        } finally {
-            setIsLoading(false);
-        }
-    }, [apiKeysLoaded, apiBibleApiKey, selectedTranslationId, downloadedTranslationIds]);
-
-    useEffect(() => {
-        loadData();
-    }, [loadData]);
+    // The list is now derived directly from the store + download status
+    const displayList = useMemo(() => {
+        const downloadedSet = new Set(downloadedTranslationIds);
+        return availableTranslations.map(t => ({
+            ...t,
+            // isDownloaded is based on presence in downloadedTranslationIds from store
+            isDownloaded: IS_WEB ? false : downloadedSet.has(t.id), // Use t.id (abbr)
+            isActive: t.id === selectedTranslationId,
+        }));
+    }, [availableTranslations, downloadedTranslationIds, selectedTranslationId]);
 
     // Filter logic: derive filtered list based on searchTerm
-    const filteredList = displayList.filter(item => {
+    const filteredList = useMemo(() => displayList.filter(item => {
         if (!searchTerm) return true; // Show all if search is empty
         const lowerSearchTerm = searchTerm.toLowerCase();
         return (
             item.name.toLowerCase().includes(lowerSearchTerm) ||
-            item.abbreviation.toLowerCase().includes(lowerSearchTerm) ||
-            item.language.name.toLowerCase().includes(lowerSearchTerm)
+            item.abbr.toLowerCase().includes(lowerSearchTerm) ||
+            item.lang.toLowerCase().includes(lowerSearchTerm)
         );
-    });
+    }), [displayList, searchTerm]);
 
-    const handlePressItem = (translation: DisplayTranslation) => {
-        if (translation.isDownloaded || IS_WEB) {
-            // Allow selection if downloaded OR if on web (reading uses API directly)
-            setSelectedTranslation(translation.id);
-        } else if (!IS_WEB && !isDownloading) {
-            // Ask for confirmation before downloading
-            Alert.alert(
-                "Confirm Download",
-                `Download the ${translation.name} translation? This may take some time and use data.`, 
-                [
-                    { text: "Cancel", style: "cancel" },
-                    { 
-                        text: "Download", 
-                        onPress: () => {
-                            // Call download function asynchronously
-                            downloadAndStoreTranslation(translation).catch(err => {
-                                // Error is already handled within download func and sets store state
-                                console.error("Download initiation failed (already logged):", err);
-                            });
-                        }
-                    }
-                ]
-            );
-        }
+    // --- Event Handlers ---
+
+    const handleSelectItem = (item: DisplayTranslation) => {
+        console.log(`[Settings] Selecting item: ${item.id}`);
+        setSelectedTranslation(item.id);
     };
 
+    const handleDownloadItem = (item: DisplayTranslation) => {
+         if (IS_WEB || isDownloading) return; // Should not happen if button disabled, but check anyway
+
+        Alert.alert(
+            "Confirm Download",
+            `Download the ${item.name} translation (${item.abbr})? This may take some time and use data.`, 
+            [
+                { text: "Cancel", style: "cancel" },
+                { 
+                    text: "Download", 
+                    onPress: async () => {
+                        console.log(`[Settings] Starting download for: ${item.dbFileName}`);
+                        try {
+                             // Call new download function
+                            await downloadDbFile(item.dbFileName, item.id); // Pass dbFilename and id (abbr)
+                            // Store updates progress and adds to downloaded list on success
+                            console.log(`[Settings] Download call finished for ${item.dbFileName}.`);
+                        } catch (err) {
+                            console.error(`[Settings] Download initiation failed for ${item.dbFileName}:`, err);
+                            // Error state is set in store by the download service
+                            Alert.alert("Download Error", err instanceof Error ? err.message : "An unknown error occurred.");
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
+    const handleDeleteItem = (item: DisplayTranslation) => {
+         if (IS_WEB || isDownloading || !item.isDownloaded) return;
+
+         Alert.alert(
+            "Confirm Delete",
+            `Delete the downloaded data for ${item.name} (${item.abbr})?`, 
+            [
+                { text: "Cancel", style: "cancel" },
+                { 
+                    text: "Delete", 
+                    style: "destructive",
+                    onPress: async () => {
+                        console.log(`[Settings] Deleting: ${item.dbFileName}`);
+                        // TODO: Add local loading state if needed
+                        try {
+                            await deleteDbFile(item.dbFileName);
+                            removeDownloadedTranslation(item.id); // Update store
+                            console.log(`[Settings] Deleted ${item.dbFileName} successfully.`);
+                        } catch (err) {
+                             console.error(`[Settings] Failed to delete ${item.dbFileName}:`, err);
+                             Alert.alert("Delete Error", err instanceof Error ? err.message : "An unknown error occurred.");
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
+    // --- Render Logic ---
+
     const renderItem = ({ item }: { item: DisplayTranslation }) => {
-        // Determine if the current item is the one being downloaded
-        const isCurrentDownload = isDownloading && item.id === downloadingTranslationId; // Use the reactive state variable
+        // Determine current status flags directly here using store state
+        const isItemDownloaded = IS_WEB ? false : downloadedTranslationIds.includes(item.id);
+        const isItemActive = item.id === selectedTranslationId;
+        const isCurrentItemDownloading = isDownloading && downloadingTranslationId === item.id;
+        // Disable press if another download is active
+        const pressDisabled = !IS_WEB && isDownloading && !isCurrentItemDownloading;
 
         return (
             <Pressable
-                disabled={!IS_WEB && isDownloading && !isCurrentDownload} // Disable others while one downloads
+                disabled={pressDisabled} 
                 style={({ pressed }) => [
                     styles.itemBase,
-                    item.isActive && styles.itemActive,
-                    (pressed || (!IS_WEB && isDownloading && !isCurrentDownload)) && styles.itemDisabled,
+                    isItemActive && styles.itemActive,
+                    (pressed || pressDisabled) && styles.itemDisabled,
                 ]}
-                onPress={() => handlePressItem(item)}
+                // Select if downloaded, otherwise trigger download
+                onPress={() => isItemDownloaded ? handleSelectItem(item) : handleDownloadItem(item)}
             >
                 <View style={styles.infoContainer}>
-                    <Text style={styles.name}>{item.name} ({item.abbreviation})</Text>
-                    <Text style={styles.language}>{item.language.name}</Text>
+                    <Text style={styles.name}>{item.name} ({item.abbr})</Text>
+                    <Text style={styles.language}>{item.lang} - {item.description || ''}</Text>
                 </View>
                 <View style={styles.statusContainer}>
-                    {/* Display Download Status */}
-                    {IS_WEB ? (
-                         <Text style={styles.webNote}>Select to read</Text>
-                     ) : isCurrentDownload ? ( // Show progress for the item being downloaded
-                         <Text style={styles.statusText}>Downloading {(downloadProgress * 100).toFixed(0)}%...</Text>
-                     ) : item.isDownloaded ? (
-                         <Text style={item.isActive ? styles.activeText : styles.statusText}>
-                             ✓ Downloaded {item.isActive ? '(Active)' : ''}
-                         </Text>
-                     ) : (
-                         <Text style={styles.downloadButton}>Download</Text>
-                     )
-                    }
+                    {/* Display Download Status - Native Only Logic for now */}
+                    {!IS_WEB && (
+                        isCurrentItemDownloading ? (
+                            <Text style={styles.statusText}>Downloading {(downloadProgress * 100).toFixed(0)}%...</Text>
+                        ) : isItemDownloaded ? (
+                            <View style={styles.downloadedContainer}> 
+                                <Text style={isItemActive ? styles.activeText : styles.downloadedText}>
+                                    ✓ {isItemActive ? '(Active)' : 'Downloaded'}
+                                </Text>
+                                <TouchableOpacity onPress={() => handleDeleteItem(item)} style={styles.deleteButton}>
+                                     <Text style={styles.deleteButtonText}>Delete</Text>
+                                </TouchableOpacity>
+                            </View>
+                        ) : (
+                            <Text style={styles.downloadButton}>Download</Text>
+                        )
+                    )}
+                    {IS_WEB && <Text style={styles.webNote}>Not implemented</Text>} 
                 </View>
             </Pressable>
         );
@@ -170,7 +174,7 @@ export default function SettingsScreen() {
 
     return (
         <Container>
-            <Stack.Screen options={{ title: 'Settings & Translations' }} />
+            <Stack.Screen options={{ title: 'Settings & Downloads' }} />
             <View style={styles.container}>
                 <TextInput
                     style={styles.searchInput}
@@ -179,31 +183,34 @@ export default function SettingsScreen() {
                     onChangeText={setSearchTerm}
                     placeholderTextColor="#999"
                 />
-
-                {!apiKeysLoaded && <Text>Loading API keys...</Text>}
-                {error && <Text style={styles.errorText}>Error: {error}</Text>}
-                {isLoading && <ActivityIndicator style={{ marginTop: 20 }} size="large" color="#0000ff" />}
                 
-                {!isLoading && !error && apiKeysLoaded && apiBibleApiKey && (
-                    <FlatList
-                        data={filteredList}
-                        renderItem={renderItem}
-                        keyExtractor={(item) => item.id}
-                        ListEmptyComponent={<Text>No translations found.</Text>}
-                        extraData={{ selectedTranslationId, isDownloading, downloadProgress }}
-                    />
-                )}
-                 {apiKeysLoaded && !apiBibleApiKey && !isLoading && !error && 
-                    <Text style={styles.errorText}>API.Bible key missing.</Text>}
-                {downloadError && !isLoading && <Text style={[styles.errorText, {marginTop: 5}]}>Download Error: {downloadError}</Text>}
+                {/* Removed API Key check for list display */}
+                {/* Add check if availableTranslations list is empty? */}
+                {/* {availableTranslations.length === 0 && <Text>Loading translation list...</Text>} */} 
+
+                {error && <Text style={styles.errorText}>Error: {error}</Text>}
+                {/* Global download error display */} 
+                {downloadError && !isDownloading && <Text style={[styles.errorText, {marginTop: 5}]}>Download Error: {downloadError}</Text>}
+                
+                <FlatList
+                    data={filteredList}
+                    renderItem={renderItem}
+                    keyExtractor={(item) => item.id}
+                    ListEmptyComponent={<Text>No translations match your search.</Text>}
+                    // Add necessary extraData for FlatList updates
+                    extraData={{ selectedTranslationId, downloadedTranslationIds, isDownloading, downloadProgress }}
+                />
+                
             </View>
         </Container>
     );
 }
 
+// --- Styles (Add/Modify as needed) ---
 const styles = StyleSheet.create({
     container: {
         flex: 1,
+        padding: 15, // Add some padding
     },
     searchInput: {
         height: 40,
@@ -217,9 +224,9 @@ const styles = StyleSheet.create({
     },
     itemBase: {
         backgroundColor: '#fff',
-        paddingVertical: 15,
-        paddingHorizontal: 20,
-        marginBottom: 15,
+        paddingVertical: 12, // Adjust padding
+        paddingHorizontal: 15, // Adjust padding
+        marginBottom: 12, // Increased spacing
         borderRadius: 8,
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -228,12 +235,13 @@ const styles = StyleSheet.create({
         borderColor: '#ddd',
     },
     itemActive: {
-        borderColor: 'red',
+        borderColor: '#c53030', // Darker Red-700 for border
         borderWidth: 2,
-        backgroundColor: '#ffebee',
+        backgroundColor: '#fed7d7', // Lighter Red-100 background for active
     },
     itemDisabled: {
-        opacity: 0.6,
+        opacity: 0.5, // Keep disabled opacity
+        backgroundColor: '#f7fafc', // Lighter grey background when disabled
     },
     infoContainer: {
         flex: 1,
@@ -241,39 +249,63 @@ const styles = StyleSheet.create({
     },
     name: {
         fontSize: 16,
-        fontWeight: 'bold',
-        marginBottom: 2,
+        fontWeight: '600', // Semibold
+        marginBottom: 3,
     },
     language: {
-        fontSize: 14,
-        color: '#555',
+        fontSize: 13, // Smaller language text
+        color: '#718096', // Gray-600
     },
     statusContainer: {
-        minWidth: 100, 
+        // Removed minWidth, let content size it
+        alignItems: 'flex-end', // Keep outer container aligned right
         justifyContent: 'center'
     },
     statusText: {
         fontSize: 14,
-        color: 'green',
+        color: '#4a5568', // Gray-700
+    },
+    downloadedContainer: { 
+        // Arrange text and delete button horizontally
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    downloadedText: {
+        fontSize: 14,
+        color: '#38a169', // Green-600
+        // Remove margin bottom
+        // marginBottom: 4, 
     },
     activeText: {
       fontSize: 14,
-      color: '#0056b3',
+      color: '#c53030', // Red-700 for active text too
       fontWeight: 'bold',
+      // Remove margin bottom
+      // marginBottom: 4,
     },
-    downloadButton: {
+    downloadButton: { 
         fontSize: 14,
-        color: 'red',
+        color: '#c53030', // Make Download text red
         fontWeight: 'bold',
+    },
+    deleteButton: { 
+       paddingVertical: 2,
+       // Add left margin for spacing
+       marginLeft: 8, 
+    },
+    deleteButtonText: { // Style for the delete text itself
+        fontSize: 12,
+        color: '#e53e3e', // Red-600
+        // fontWeight: 'bold',
     },
     webNote: {
       fontSize: 14,
-      color: '#666',
+      color: '#a0aec0', // Gray-500
       fontStyle: 'italic'
     },
     errorText: {
-        color: 'red',
+        color: '#e53e3e',
         textAlign: 'center',
-        marginTop: 20,
+        marginVertical: 10, // Use vertical margin
     },
 }); 

@@ -4,7 +4,7 @@ import { Stack } from "expo-router"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
 import { MessagesProvider } from "~/hooks/useMessages"
 import { loadApiKeys, saveApiKeys } from "~/utils/apiKeyManager"
-import { initializeStore } from "~/store/store";
+import { useAppStore } from "~/store/store";
 
 export const unstable_settings = {
   // Ensure that reloading on `/modal` keeps a back button present.
@@ -13,7 +13,7 @@ export const unstable_settings = {
 
 // API Keys - REMOVE/REPLACE with a secure method before production
 const OPENROUTER_API_KEY = "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";
-const APIBIBLE_API_KEY = "6514da84cf38ee1d734031669a5c400d";
+const APIBIBLE_API_KEY = "61835cdb7d9757a00df8262d1e41d338";
 
 export default function RootLayout() {
   // Effect to save API keys and initialize store
@@ -35,8 +35,14 @@ export default function RootLayout() {
 
       // 2. Initialize the Zustand store (loads keys into state, etc.)
       console.log("Initializing app state...");
-      await initializeStore();
-      console.log("App state initialized.");
+      try {
+        // Get the action from the store instance
+        await useAppStore.getState().initializeStore(); 
+        console.log("App state initialized.");
+      } catch (error) {
+          console.error("CRITICAL: Failed to initialize app state:", error);
+          // Handle initialization error (e.g., show error message, retry?)
+      }
 
       // TODO: Add any other essential async setup here (e.g., check DB connection)
     };

@@ -1,154 +1,142 @@
 import { FlashList } from "@shopify/flash-list";
 import { Text, View, Platform } from "react-native";
 import { Stack, useLocalSearchParams, useNavigation } from "expo-router";
-import { useEffect, useState } from "react";
-import RenderHTML from 'react-native-render-html'; // To render HTML content from API
+import { useEffect, useState, useMemo } from "react";
+import RenderHTML from 'react-native-render-html';
 import { useWindowDimensions } from 'react-native';
 
 import { Container } from "~/components/Container";
 import { useAppStore } from "~/store/store";
-import type { AppState } from "~/store/store";
-import * as db from "~/db/database";
-import * as api from "~/services/apiBible";
-import { type ApiBibleVerse } from "~/services/apiBible";
+import { getVerses, getBooks, type Verse, type AppBook } from "~/db/database";
+import { type ScrollmapperTranslationInfo } from "~/config/translationMap";
 
 const IS_WEB = Platform.OS === 'web';
 
-// Define local verse type based on DB schema
-// Include 'reference' which usually contains the verse number
-interface Verse extends Pick<ApiBibleVerse, 'id' | 'content' | 'reference'> {
-  // Add any other fields needed from the DB 'verses' table
-}
-
-// Helper to extract verse number from reference (e.g., "Genesis 1:1" -> "1")
-function extractVerseNumber(reference: string): string {
-    const parts = reference?.split(':');
-    const numPart = parts?.[1];
-    // Return empty string if it's not a simple number (handles intro)
-    return /^[0-9]+$/.test(numPart) ? numPart : ''; 
-}
-
 // Define base styles for RenderHTML
 const tagsStyles = {
-  p: { color: 'black', marginBottom: 8 }, // Style for paragraphs
-  // Add other tags if needed based on API content
+  p: { color: 'black', marginBottom: 8, fontSize: 16 }, // Style for paragraphs
+  // Add other tags if needed based on scrollmapper HTML content (e.g., .v for verse numbers?)
 };
 
-export default function BibleChapterReaderScreen() {
-  const { chapterId } = useLocalSearchParams<{ chapterId: string }>();
+export default function BibleVerseReaderScreen() {
+  // Get params based on the new route structure: [bookId]/[chapterNumber]
+  const { bookId, chapterNumber: chapterNumberParam } = useLocalSearchParams<{ bookId: string, chapterNumber: string }>();
   const navigation = useNavigation();
-  const selectedTranslationId = useAppStore((state: AppState) => state.selectedTranslationId);
-  const setCurrentLocation = useAppStore((state: AppState) => state.setCurrentLocation);
-  const apiBibleApiKey = useAppStore((state: AppState) => state.apiBibleApiKey);
-  const availableTranslations = useAppStore((state: AppState) => state.availableTranslations);
+  
+  // Zustand state and actions
+  const selectedTranslationId = useAppStore((state) => state.selectedTranslationId); // abbr
+  const availableTranslations = useAppStore((state) => state.availableTranslations);
+  const setCurrentLocation = useAppStore((state) => state.setCurrentLocation);
+  const downloadedTranslationIds = useAppStore((state) => state.downloadedTranslationIds);
 
-  const [verses, setVerses] = useState<Verse[]>([]);
-  const [chapterReference, setChapterReference] = useState<string | null>(null);
+  // Component state
+  const [verses, setVerses] = useState<Verse[]>([]); // Use Verse type from db
+  const [bookName, setBookName] = useState<string | null>(bookId ?? 'Book');
+  const [chapterNumber, setChapterNumber] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { width } = useWindowDimensions();
+  const { width } = useWindowDimensions(); // For RenderHTML width
+
+  // Find the selected translation object
+  const selectedTranslation = useMemo(() => 
+      availableTranslations.find(t => t.id === selectedTranslationId), 
+      [availableTranslations, selectedTranslationId]
+  );
+
+  // Check if downloaded
+  const isSelectedDownloaded = useMemo(() => 
+    IS_WEB || (selectedTranslationId ? downloadedTranslationIds.includes(selectedTranslationId) : false),
+    [selectedTranslationId, downloadedTranslationIds]
+  );
 
   useEffect(() => {
-    const loadChapterData = async () => {
-      let currentTranslationId = selectedTranslationId;
-      // TEMP Default
-      if (!currentTranslationId) {
-          console.log("No translation selected, defaulting to KJV for loading verses.");
-          currentTranslationId = 'de4e12af7f28f599-01'; // KJV ID
-      }
-      // END TEMP
+    const loadVerseData = async () => {
+      const chapterNum = parseInt(chapterNumberParam ?? '', 10);
+      setChapterNumber(isNaN(chapterNum) ? null : chapterNum); // Update chapter number state
 
-      if (!currentTranslationId || !chapterId) {
-        setError("Missing translation or chapter ID.");
+      if (!selectedTranslation || !bookId || isNaN(chapterNum)) {
+        setError("Missing translation, book ID, or valid chapter number.");
         setVerses([]);
-        setChapterReference(null);
+        setBookName(bookId); // Keep param bookId if no translation
         return;
       }
       
-      if (IS_WEB && !apiBibleApiKey) {
-          setError("API Key is required for web view.");
-          setVerses([]);
-          return;
+      // Web view deferred
+      if (IS_WEB) {
+        setError("Web view not yet implemented with this data source.");
+        setVerses([]);
+        return;
+      }
+
+      // Check download status
+      if (!isSelectedDownloaded) {
+         setError("Selected translation is not downloaded.");
+         setVerses([]); 
+         // Allow UI below to handle showing button/message
       }
 
       setIsLoading(true);
       setError(null);
+      setVerses([]); // Clear previous verses
+
       try {
-        let verseData: Verse[] = [];
-        let fetchedChapterRef: string | null = chapterId; // Fallback
-        let fetchedBookId: string | null = null;
+        // Fetch book name if needed (could be passed from previous screen too)
+        // Let's fetch it here for robustness
+        // Pass only the abbreviation
+        const booksInTranslation = await getBooks(selectedTranslation.abbr);
+        const currentBook = booksInTranslation.find(b => b.id === bookId);
+        setBookName(currentBook?.name ?? bookId); // Update book name state
 
-        if (IS_WEB) {
-          console.log(`WEB: Fetching verses for ${chapterId} in ${currentTranslationId} from API...`);
-          // Fetch verses directly from API
-          // We don't easily get the nice chapter reference (e.g., "Genesis 1") or book ID from this call
-          // We might need another API call or derive it from chapterId if possible.
-          fetchedChapterRef = chapterId; // Use ID as ref for now
-          const apiVerses = await api.fetchVersesForChapter(currentTranslationId, chapterId);
-          verseData = apiVerses.map(v => ({ 
-              id: v.id, 
-              content: v.content, 
-              reference: v.reference 
-            }));
-            // Extract bookId from chapterId (e.g., GEN.1 -> GEN)
-           fetchedBookId = chapterId.split('.')[0] || null;
-
-        } else {
-          console.log(`NATIVE: Fetching verses for ${chapterId} in ${currentTranslationId} from DB...`);
-          // Fetch chapter reference for the title from DB
-          const chapterInfo = await db.get<{ reference: string, book_id: string }>(
-            "SELECT reference, book_id FROM chapters WHERE translation_id = ? AND id = ?",
-            [currentTranslationId, chapterId]
-          );
-          fetchedChapterRef = chapterInfo?.reference ?? chapterId;
-          fetchedBookId = chapterInfo?.book_id ?? null;
-
-          // Fetch verses for the chapter from DB
-          // Adjust query based on whether it's an intro chapter
-          const isIntro = chapterId.endsWith('.intro');
-          const verseIdentifier = isIntro ? 'intro' : chapterId;
-          const verseNumberColumn = isIntro ? '' : 'verse_number'; // Decide which column based on type
-          const whereClause = isIntro ? "verse_number = 'intro'" : "chapter_id = ?";
-          const queryParams = isIntro ? [currentTranslationId, chapterId.replace('.intro', '')] : [currentTranslationId, chapterId]; // Adjust params
-
-          // Fetch verses for the chapter from DB
-          // Adjust query based on whether it's an intro chapter
-          const verseDbData = await db.all<{ id: string, verse_number: string, content: string }>(
-            `SELECT id, verse_number, content FROM verses WHERE translation_id = ? AND chapter_id = ? AND ${whereClause} ORDER BY sort_order ASC`,
-            queryParams,
-          );
-          // Map DB data to Verse interface, constructing the reference
-          verseData = verseDbData.map(v => ({
-            id: v.id,
-            content: v.content,
-            reference: `${fetchedChapterRef}:${v.verse_number}` // Construct full reference
-          }));
-        }
-
-        setChapterReference(fetchedChapterRef);
+        // Fetch verses using the new function
+        // Pass abbr, bookId, and chapterNum
+        const verseData = await getVerses(selectedTranslation.abbr, bookId, chapterNum);
         setVerses(verseData);
 
-        // Update current location in Zustand store if we found a book ID
-        if (fetchedBookId) {
-            setCurrentLocation(fetchedBookId, chapterId);
+        // --- LOG RAW VERSE TEXT ---
+        if (verseData && verseData.length > 0) {
+          console.log(`[VerseScreen] Raw text for first verse (${bookId} ${chapterNum}:${verseData[0].verse}):`, verseData[0].text);
+          if (verseData.length > 1) {
+            console.log(`[VerseScreen] Raw text for second verse (${bookId} ${chapterNum}:${verseData[1].verse}):`, verseData[1].text);
+          }
         }
+        // --- END LOG ---
+
+        if (verseData.length === 0) {
+             console.warn(`[VerseScreen] No verses found for ${bookId} ${chapterNum} in ${selectedTranslation.abbr}`);
+             setError("No verses found for this chapter.");
+         }
+
+        // Update current location in Zustand store
+        setCurrentLocation(bookId, chapterNum);
 
       } catch (err) {
-        console.error(`Error loading chapter data (${IS_WEB ? 'API' : 'DB'}):`, err);
-        setError(err instanceof Error ? err.message : "Failed to load chapter data");
+        console.error(`[VerseScreen] Error loading verse data from DB:`, err);
+        setError(err instanceof Error ? err.message : "Failed to load verses");
+        setBookName(bookId); // Reset to param on error
       } finally {
         setIsLoading(false);
       }
     };
 
-    loadChapterData();
-  }, [selectedTranslationId, chapterId, setCurrentLocation, apiBibleApiKey]);
+    // Only load if translation is selected and params exist
+    if (selectedTranslationId && bookId && chapterNumberParam) {
+        loadVerseData();
+    } else {
+         setError("Missing translation, book, or chapter information.");
+         setVerses([]);
+         setIsLoading(false);
+    }
 
-  // Find the abbreviation of the selected translation
-  const selectedTranslationAbbr = availableTranslations.find(t => t.id === selectedTranslationId)?.abbreviation ?? '';
-  const screenTitle = chapterReference ? `${chapterReference} (${selectedTranslationAbbr})` : `Loading... (${selectedTranslationAbbr})`;
+  }, [selectedTranslationId, selectedTranslation, bookId, chapterNumberParam, setCurrentLocation, isSelectedDownloaded]); // Add isSelectedDownloaded dependency
 
   // Update header title dynamically
+  const screenTitle = useMemo(() => 
+      (bookName && chapterNumber !== null) 
+          ? `${bookName} ${chapterNumber} (${selectedTranslation?.abbr ?? ''})` 
+          : `Loading...`, 
+      [bookName, chapterNumber, selectedTranslation]
+  );
+
   useEffect(() => {
     navigation.setOptions({ title: screenTitle });
   }, [navigation, screenTitle]);
@@ -158,32 +146,39 @@ export default function BibleChapterReaderScreen() {
       <View className="flex-1 p-4">
         {isLoading && <Text>Loading verses...</Text>}
         {error && <Text className="text-red-500">Error: {error}</Text>}
-        {!isLoading && !error && verses.length === 0 && (
-          <Text>No verses found. {IS_WEB ? 'Check connection/API key.' : 'Try downloading.'}</Text>
+        
+        {/* Handle not downloaded case */}
+        {!isLoading && !error && !isSelectedDownloaded && !IS_WEB && (
+             <View className="items-center justify-center flex-1">
+                <Text className="text-center mb-4">This translation is not downloaded.</Text>
+                {/* Could add button to go to settings */}
+            </View>
         )}
-        {!isLoading && !error && verses.length > 0 && (
+        
+        {/* Handle no verses found */} 
+        {!isLoading && !error && isSelectedDownloaded && verses.length === 0 && (
+          <Text>No verses found for this chapter.</Text>
+        )}
+        
+        {/* Display verse list */} 
+        {!isLoading && !error && isSelectedDownloaded && verses.length > 0 && (
           <FlashList
             data={verses}
             estimatedItemSize={50} // Adjust
             renderItem={({ item }) => {
-              console.log("Verse Content:", item.content); // Log verse content
-              const verseNumDisplay = extractVerseNumber(item.reference);
+              // item is now { verse: number, text: string }
               return (
                 <View className="flex-row mb-2">
-                  {/* Only show number if it exists */}
-                  {verseNumDisplay && (
-                      <Text className="text-sm font-bold w-8 pt-1">
-                        {verseNumDisplay} 
-                      </Text>
-                  )}
-                  {/* Render HTML content from verse */}
-                  <View style={{ flex: 1, marginLeft: verseNumDisplay ? 0 : 32 }}> {/* Indent content if no number */}
-                     {item.content && item.content.trim() !== '' ? (
+                  <Text className="text-sm font-bold w-8 pt-1">
+                    {item.verse} 
+                  </Text>
+                  <View style={{ flex: 1 }}>
+                     {item.text && item.text.trim() !== '' ? (
                          <RenderHTML
                             contentWidth={width - 64} // Adjust width based on padding/margins
-                            source={{ html: item.content }}
-                            baseStyle={{ color: 'black', fontSize: 16 }} // Add fontSize
-                            tagsStyles={tagsStyles} // Add tag-specific styles
+                            source={{ html: item.text }} // Use item.text directly
+                            baseStyle={{ color: 'black', fontSize: 16 }} // Consistent font size
+                            tagsStyles={tagsStyles}
                         />
                      ) : (
                          <Text style={{color: '#999', fontSize: 16, fontStyle: 'italic'}}>[Verse text not available]</Text>
@@ -192,16 +187,12 @@ export default function BibleChapterReaderScreen() {
                 </View>
               );
             }}
-            keyExtractor={(item) => item.id}
+            // Use verse number for key - requires combining with something if verse numbers aren't unique (e.g., verse 0)
+            // Assuming verse number is unique within the chapter for now
+            keyExtractor={(item) => item.verse.toString()}
           />
         )}
       </View>
     </Container>
   );
-}
-
-// TODO: Define base styles for RenderHTML
-// const tagsStyles = {
-//   p: { marginVertical: 0, /* other styles */ },
-//   // Add other tags used in API content (span, sup, etc.)
-// }; 
+} 

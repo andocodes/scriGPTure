@@ -1,116 +1,112 @@
 import { FlashList } from "@shopify/flash-list";
 import { Text, View, Platform } from "react-native";
-import { Link, Stack, useLocalSearchParams, useNavigation } from "expo-router";
-import { useEffect, useState } from "react";
+import { Link, Stack, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
+import { useEffect, useState, useMemo } from "react";
 
 import { Button } from "~/components/Button";
 import { Container } from "~/components/Container";
 import { useAppStore } from "~/store/store";
-import type { AppState } from "~/store/store";
-import * as db from "~/db/database";
-import * as api from "~/services/apiBible";
-import { type ApiBibleChapter } from "~/services/apiBible";
+import { getChapters, getBooks, type AppBook } from "~/db/database";
+import { type ScrollmapperTranslationInfo } from "~/config/translationMap";
 
 const IS_WEB = Platform.OS === 'web';
 
-// Define local chapter type based on DB schema
-interface Chapter extends Pick<ApiBibleChapter, 'id' | 'reference'> {
-  // Add any other fields needed from the DB 'chapters' table
-  bookName?: string; // Might fetch this too for context
-}
+// Chapter data is now just the number
+type ChapterNumber = number;
 
 export default function BibleChaptersScreen() {
   const { bookId } = useLocalSearchParams<{ bookId: string }>();
   const navigation = useNavigation();
-  // Select state individually
-  const selectedTranslationId = useAppStore((state: AppState) => state.selectedTranslationId);
-  const apiBibleApiKey = useAppStore((state: AppState) => state.apiBibleApiKey);
-  const availableTranslations = useAppStore((state: AppState) => state.availableTranslations); // Get available translations
+  const router = useRouter();
   
-  const [chapters, setChapters] = useState<Chapter[]>([]);
-  const [bookName, setBookName] = useState<string | null>(null);
+  // Get state
+  const selectedTranslationId = useAppStore((state) => state.selectedTranslationId);
+  const availableTranslations = useAppStore((state) => state.availableTranslations);
+  const downloadedTranslationIds = useAppStore((state) => state.downloadedTranslationIds);
+
+  // State for chapter numbers and book name
+  const [chapters, setChapters] = useState<ChapterNumber[]>([]);
+  const [bookName, setBookName] = useState<string | null>(bookId ?? 'Book');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const loadChapters = async () => {
-        let currentTranslationId = selectedTranslationId;
-        // TEMP Default
-        if (!currentTranslationId) {
-            console.log("No translation selected, defaulting to KJV for loading chapters.");
-            currentTranslationId = 'de4e12af7f28f599-01'; // KJV ID
-        }
-        // END TEMP
+  // Find the selected translation object
+  const selectedTranslation = useMemo(() => 
+      availableTranslations.find(t => t.id === selectedTranslationId), 
+      [availableTranslations, selectedTranslationId]
+  );
 
-        if (!currentTranslationId || !bookId) {
-            setError("Missing translation or book ID.");
-            setChapters([]);
-            setBookName(null);
-            return;
-        }
-        
-        if (IS_WEB && !apiBibleApiKey) {
-            setError("API Key is required for web view.");
-            setChapters([]);
-            return;
-        }
+  // Check if downloaded
+  const isSelectedDownloaded = useMemo(() => 
+    IS_WEB || (selectedTranslationId ? downloadedTranslationIds.includes(selectedTranslationId) : false),
+    [selectedTranslationId, downloadedTranslationIds]
+  );
+
+  useEffect(() => {
+    const loadChapterData = async () => {
+      if (!selectedTranslation || !bookId) {
+        setError("Missing translation or book ID.");
+        setChapters([]);
+        setBookName(bookId);
+        return;
+      }
+
+      // Web view deferred
+      if (IS_WEB) {
+        setError("Web view not yet implemented with this data source.");
+        setChapters([]);
+        return;
+      }
+
+      // Check download status
+      if (!isSelectedDownloaded) {
+         setError("Selected translation is not downloaded.");
+         setChapters([]); 
+      }
 
       setIsLoading(true);
       setError(null);
+      setChapters([]);
+
       try {
-        let chapterData: Chapter[] = [];
-        let fetchedBookName: string | null = bookId; // Fallback book name
+        // Fetch book name first using getBooks
+        const booksInTranslation = await getBooks(selectedTranslation.abbr);
+        const currentBook = booksInTranslation.find(b => b.id === bookId);
+        setBookName(currentBook?.name ?? bookId);
 
-        if (IS_WEB) {
-          console.log(`WEB: Fetching chapters for ${bookId} in ${currentTranslationId} from API...`);
-          // Fetch chapters directly from API
-          // Note: API.Bible books endpoint can include chapters, but we fetched them separately.
-          // We could fetch book details again here to get the name if needed, or rely on nav params.
-          // For simplicity, let's assume we might not have the accurate book name on web initially.
-          const apiChapters = await api.fetchChaptersForBook(currentTranslationId, bookId);
-          // We might need to fetch book details separately if name isn't passed
-          // fetchedBookName = (await api.fetchBookDetails(currentTranslationId, bookId)).name; 
-          chapterData = apiChapters.map(c => ({ id: c.id, reference: c.reference }));
-          // Assuming book name might not be readily available from this API call alone
-          fetchedBookName = bookId; // Placeholder
-        } else {
-          console.log(`NATIVE: Fetching chapters for ${bookId} in ${currentTranslationId} from DB...`);
-          // Fetch book name for the title from DB
-          const bookInfo = await db.get<{ name: string }>(
-            "SELECT name FROM books WHERE translation_id = ? AND id = ?",
-            [currentTranslationId, bookId]
-          );
-          fetchedBookName = bookInfo?.name ?? bookId;
-
-          // Fetch chapters for the book from DB
-          chapterData = await db.all<Chapter>(
-            "SELECT id, reference FROM chapters WHERE translation_id = ? AND book_id = ? ORDER BY sort_order ASC",
-            [currentTranslationId, bookId],
-          );
-        }
-        setBookName(fetchedBookName);
-        console.log('Raw chapterData:', JSON.stringify(chapterData)); // Log raw data
-        // Remove filtering - display all fetched chapters including intro
-        // const filteredChapters = chapterData.filter(c => c.id.includes('.')); 
-        // console.log('Filtered chapterData:', JSON.stringify(filteredChapters));
-        setChapters(chapterData); // Set raw data
+        // Then fetch chapter numbers
+        const chapterNumbers = await getChapters(selectedTranslation.abbr, bookId);
+        setChapters(chapterNumbers);
+        
+        if (chapterNumbers.length === 0) {
+             console.warn(`[ChaptersScreen] No chapters found for ${bookId} in ${selectedTranslation.abbr}`);
+             setError("No chapters found for this book.");
+         }
 
       } catch (err) {
-        console.error(`Error loading chapters (${IS_WEB ? 'API' : 'DB'}):`, err);
+        console.error(`[ChaptersScreen] Error loading chapter data from DB:`, err);
         setError(err instanceof Error ? err.message : "Failed to load chapters");
+        setBookName(bookId);
       } finally {
         setIsLoading(false);
       }
     };
 
-    loadChapters();
-  }, [selectedTranslationId, bookId, apiBibleApiKey]);
+    if (selectedTranslationId && bookId) {
+        loadChapterData();
+    } else {
+         setError(selectedTranslationId ? "Missing book ID" : "No translation selected");
+         setChapters([]);
+         setIsLoading(false);
+    }
 
-  // Find the abbreviation of the selected translation
-  const selectedTranslationAbbr = availableTranslations.find(t => t.id === selectedTranslationId)?.abbreviation ?? '';
-  const screenTitle = bookName ? `${bookName} (${selectedTranslationAbbr})` : `Select Chapter (${selectedTranslationAbbr})`;
+  }, [selectedTranslationId, selectedTranslation, bookId, isSelectedDownloaded]);
 
-  // Update header title dynamically when bookName or abbreviation changes
+  const screenTitle = useMemo(() => 
+      bookName ? `${bookName} (${selectedTranslation?.abbr ?? ''})` : `Select Chapter`, 
+      [bookName, selectedTranslation]
+  );
+
   useEffect(() => {
     navigation.setOptions({ title: screenTitle });
   }, [navigation, screenTitle]);
@@ -120,21 +116,37 @@ export default function BibleChaptersScreen() {
       <View className="flex-1 p-4">
         {isLoading && <Text>Loading chapters...</Text>}
         {error && <Text className="text-red-500">Error: {error}</Text>}
-        {!isLoading && !error && chapters.length === 0 && (
-          <Text>No chapters found. {IS_WEB ? 'Check connection/API key.' : 'Try downloading.'}</Text>
+        
+        {!isLoading && !error && !isSelectedDownloaded && !IS_WEB && (
+             <View className="items-center justify-center flex-1">
+                <Text className="text-center mb-4">This translation is not downloaded.</Text>
+                <Button 
+                    title="Go to Settings to Download"
+                    onPress={() => router.push('/(drawer)/settings')} 
+                />
+            </View>
         )}
-        {!isLoading && !error && chapters.length > 0 && (
+        
+        {!isLoading && !error && isSelectedDownloaded && chapters.length === 0 && (
+          <Text>No chapters found.</Text>
+        )}
+        
+        {!isLoading && !error && isSelectedDownloaded && chapters.length > 0 && (
           <FlashList
             data={chapters}
             estimatedItemSize={60}
             ItemSeparatorComponent={() => <View className="h-3" />}
-            renderItem={({ item }) => (
+            renderItem={({ item: chapterNumber }) => (
               <View className="p-4 bg-white rounded-lg shadow-sm flex-row justify-between items-center">
-                <Text className="text-lg font-medium">{item.reference}</Text>
+                <Text className="text-lg font-medium">Chapter {chapterNumber}</Text>
                 <Link
                   href={{
                     pathname: "/(drawer)/(bible)/chapter/[chapterId]",
-                    params: { chapterId: item.id },
+                    params: { 
+                        chapterId: `${bookId}_${chapterNumber}`,
+                        bookId: bookId, 
+                        chapterNumber: chapterNumber 
+                    },
                   }}
                   asChild
                 >
@@ -142,7 +154,7 @@ export default function BibleChaptersScreen() {
                 </Link>
               </View>
             )}
-            keyExtractor={(item) => item.id}
+            keyExtractor={(item) => item.toString()}
           />
         )}
       </View>
