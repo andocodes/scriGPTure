@@ -72,7 +72,7 @@ An AI-powered Bible study companion mobile application that combines Bible readi
 - **Bible Screen**: Read Bible passages and add them to your chat context
 - **Chat Screen**: Ask questions about scripture and receive AI-powered responses
 - **Favorites Screen**: View and manage your saved verses
-- **Settings Screen**: Configure app settings and API keys
+- **Settings Screen**: Configure app settings
 
 ## Offline Support
 
