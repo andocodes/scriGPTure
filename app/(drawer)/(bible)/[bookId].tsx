@@ -2,6 +2,7 @@ import { FlashList } from "@shopify/flash-list";
 import { Text, View, Platform } from "react-native";
 import { Link, Stack, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { useEffect, useState, useMemo } from "react";
+import React from 'react';
 
 import { Button } from "~/components/Button";
 import { Container } from "~/components/Container";
@@ -21,6 +22,7 @@ export default function BibleChaptersScreen() {
   
   // Get state
   const selectedTranslationId = useAppStore((state) => state.selectedTranslationId);
+  const isDbReady = useAppStore((state) => state.isDbReady);
   const availableTranslations = useAppStore((state) => state.availableTranslations);
   const downloadedTranslationIds = useAppStore((state) => state.downloadedTranslationIds);
 
@@ -44,10 +46,19 @@ export default function BibleChaptersScreen() {
 
   useEffect(() => {
     const loadChapterData = async () => {
-      if (!selectedTranslation || !bookId) {
-        setError("Missing translation or book ID.");
-        setChapters([]);
-        setBookName(bookId);
+      if (!selectedTranslation || !bookId || !isDbReady) {
+        if (selectedTranslationId && bookId && !isDbReady) {
+             console.log(`[ChaptersScreen] Waiting for DB to be ready for ${selectedTranslationId}...`);
+             setError("Initializing translation data...");
+             setIsLoading(true);
+             setChapters([]);
+             setBookName(bookId);
+        } else {
+            setError("Missing translation or book ID.");
+            setIsLoading(false);
+            setChapters([]);
+            setBookName(bookId);
+        }
         return;
       }
 
@@ -62,45 +73,42 @@ export default function BibleChaptersScreen() {
       if (!isSelectedDownloaded) {
          setError("Selected translation is not downloaded.");
          setChapters([]); 
+         setIsLoading(false); 
       }
+      
+      if (isSelectedDownloaded || IS_WEB) {
+          console.log(`[ChaptersScreen] DB ready for ${selectedTranslation.abbr}. Loading data for book ${bookId}...`);
+          setIsLoading(true);
+          setError(null);
+          setChapters([]);
 
-      setIsLoading(true);
-      setError(null);
-      setChapters([]);
+          try {
+            // Fetch book name first using getBooks
+            const booksInTranslation = await getBooks(selectedTranslation.abbr);
+            const currentBook = booksInTranslation.find(b => b.id === bookId);
+            setBookName(currentBook?.name ?? bookId);
 
-      try {
-        // Fetch book name first using getBooks
-        const booksInTranslation = await getBooks(selectedTranslation.abbr);
-        const currentBook = booksInTranslation.find(b => b.id === bookId);
-        setBookName(currentBook?.name ?? bookId);
+            // Then fetch chapter numbers
+            const chapterNumbers = await getChapters(selectedTranslation.abbr, bookId);
+            setChapters(chapterNumbers);
+            
+            if (chapterNumbers.length === 0) {
+                 console.warn(`[ChaptersScreen] No chapters found for ${bookId} in ${selectedTranslation.abbr}`);
+                 setError("No chapters found for this book.");
+             }
 
-        // Then fetch chapter numbers
-        const chapterNumbers = await getChapters(selectedTranslation.abbr, bookId);
-        setChapters(chapterNumbers);
-        
-        if (chapterNumbers.length === 0) {
-             console.warn(`[ChaptersScreen] No chapters found for ${bookId} in ${selectedTranslation.abbr}`);
-             setError("No chapters found for this book.");
-         }
-
-      } catch (err) {
-        console.error(`[ChaptersScreen] Error loading chapter data from DB:`, err);
-        setError(err instanceof Error ? err.message : "Failed to load chapters");
-        setBookName(bookId);
-      } finally {
-        setIsLoading(false);
-      }
+          } catch (err) {
+            console.error(`[ChaptersScreen] Error loading chapter data from DB:`, err);
+            setError(err instanceof Error ? err.message : "Failed to load chapters");
+            setBookName(bookId);
+          } finally {
+            setIsLoading(false);
+          }
+       }
     };
 
-    if (selectedTranslationId && bookId) {
-        loadChapterData();
-    } else {
-         setError(selectedTranslationId ? "Missing book ID" : "No translation selected");
-         setChapters([]);
-         setIsLoading(false);
-    }
-
-  }, [selectedTranslationId, selectedTranslation, bookId, isSelectedDownloaded]);
+    loadChapterData();
+  }, [selectedTranslationId, selectedTranslation, bookId, isSelectedDownloaded, isDbReady]);
 
   const screenTitle = useMemo(() => 
       bookName ? `${bookName} (${selectedTranslation?.abbr ?? ''})` : `Select Chapter`, 

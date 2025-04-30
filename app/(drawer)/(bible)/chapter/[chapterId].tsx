@@ -2,8 +2,7 @@ import { FlashList } from "@shopify/flash-list";
 import { Text, View, Platform } from "react-native";
 import { Stack, useLocalSearchParams, useNavigation } from "expo-router";
 import { useEffect, useState, useMemo } from "react";
-import RenderHTML from 'react-native-render-html';
-import { useWindowDimensions } from 'react-native';
+import React from 'react';
 
 import { Container } from "~/components/Container";
 import { useAppStore } from "~/store/store";
@@ -12,12 +11,6 @@ import { type ScrollmapperTranslationInfo } from "~/config/translationMap";
 
 const IS_WEB = Platform.OS === 'web';
 
-// Define base styles for RenderHTML
-const tagsStyles = {
-  p: { color: 'black', marginBottom: 8, fontSize: 16 }, // Style for paragraphs
-  // Add other tags if needed based on scrollmapper HTML content (e.g., .v for verse numbers?)
-};
-
 export default function BibleVerseReaderScreen() {
   // Get params based on the new route structure: [bookId]/[chapterNumber]
   const { bookId, chapterNumber: chapterNumberParam } = useLocalSearchParams<{ bookId: string, chapterNumber: string }>();
@@ -25,6 +18,7 @@ export default function BibleVerseReaderScreen() {
   
   // Zustand state and actions
   const selectedTranslationId = useAppStore((state) => state.selectedTranslationId); // abbr
+  const isDbReady = useAppStore((state) => state.isDbReady); // <-- Add isDbReady
   const availableTranslations = useAppStore((state) => state.availableTranslations);
   const setCurrentLocation = useAppStore((state) => state.setCurrentLocation);
   const downloadedTranslationIds = useAppStore((state) => state.downloadedTranslationIds);
@@ -35,7 +29,6 @@ export default function BibleVerseReaderScreen() {
   const [chapterNumber, setChapterNumber] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { width } = useWindowDimensions(); // For RenderHTML width
 
   // Find the selected translation object
   const selectedTranslation = useMemo(() => 
@@ -54,10 +47,21 @@ export default function BibleVerseReaderScreen() {
       const chapterNum = parseInt(chapterNumberParam ?? '', 10);
       setChapterNumber(isNaN(chapterNum) ? null : chapterNum); // Update chapter number state
 
-      if (!selectedTranslation || !bookId || isNaN(chapterNum)) {
-        setError("Missing translation, book ID, or valid chapter number.");
-        setVerses([]);
-        setBookName(bookId); // Keep param bookId if no translation
+      // Add isDbReady check here
+      if (!selectedTranslation || !bookId || isNaN(chapterNum) || !isDbReady) {
+        // Handle waiting state if ID selected but DB not ready
+        if (selectedTranslationId && bookId && !isNaN(chapterNum) && !isDbReady) {
+             console.log(`[VerseScreen] Waiting for DB to be ready for ${selectedTranslationId}...`);
+             setError("Initializing translation data...");
+             setIsLoading(true);
+             setVerses([]);
+             setBookName(bookId); // Keep param bookId initially
+        } else {
+            setError("Missing translation, book ID, or valid chapter number.");
+            setIsLoading(false);
+            setVerses([]);
+            setBookName(bookId); // Keep param bookId if no translation
+        }
         return;
       }
       
@@ -72,62 +76,47 @@ export default function BibleVerseReaderScreen() {
       if (!isSelectedDownloaded) {
          setError("Selected translation is not downloaded.");
          setVerses([]); 
+         setIsLoading(false); // Also set loading false if we show this error
          // Allow UI below to handle showing button/message
       }
 
-      setIsLoading(true);
-      setError(null);
-      setVerses([]); // Clear previous verses
+      // Only proceed if DB is ready and translation is downloaded (or web)
+      if (isSelectedDownloaded || IS_WEB) { // Check needed here too
+          console.log(`[VerseScreen] DB ready for ${selectedTranslation.abbr}. Loading data for ${bookId} ${chapterNum}...`);
+          setIsLoading(true);
+          setError(null);
+          setVerses([]); // Clear previous verses
 
-      try {
-        // Fetch book name if needed (could be passed from previous screen too)
-        // Let's fetch it here for robustness
-        // Pass only the abbreviation
-        const booksInTranslation = await getBooks(selectedTranslation.abbr);
-        const currentBook = booksInTranslation.find(b => b.id === bookId);
-        setBookName(currentBook?.name ?? bookId); // Update book name state
+          try {
+            // Fetch book name if needed (could be passed from previous screen too)
+            // Let's fetch it here for robustness
+            // Pass only the abbreviation
+            const booksInTranslation = await getBooks(selectedTranslation.abbr);
+            const currentBook = booksInTranslation.find(b => b.id === bookId);
+            setBookName(currentBook?.name ?? bookId); // Update book name state
 
-        // Fetch verses using the new function
-        // Pass abbr, bookId, and chapterNum
-        const verseData = await getVerses(selectedTranslation.abbr, bookId, chapterNum);
-        setVerses(verseData);
+            // Fetch verses using the new function
+            // Pass abbr, bookId, and chapterNum
+            const verseData = await getVerses(selectedTranslation.abbr, bookId, chapterNum);
+            setVerses(verseData);
 
-        // --- LOG RAW VERSE TEXT ---
-        if (verseData && verseData.length > 0) {
-          console.log(`[VerseScreen] Raw text for first verse (${bookId} ${chapterNum}:${verseData[0].verse}):`, verseData[0].text);
-          if (verseData.length > 1) {
-            console.log(`[VerseScreen] Raw text for second verse (${bookId} ${chapterNum}:${verseData[1].verse}):`, verseData[1].text);
+            // Update current location in Zustand store
+            setCurrentLocation(bookId, chapterNum);
+
+          } catch (err) {
+            console.error(`[VerseScreen] Error loading verse data from DB:`, err);
+            setError(err instanceof Error ? err.message : "Failed to load verses");
+            setBookName(bookId); // Reset to param on error
+          } finally {
+            setIsLoading(false);
           }
-        }
-        // --- END LOG ---
-
-        if (verseData.length === 0) {
-             console.warn(`[VerseScreen] No verses found for ${bookId} ${chapterNum} in ${selectedTranslation.abbr}`);
-             setError("No verses found for this chapter.");
-         }
-
-        // Update current location in Zustand store
-        setCurrentLocation(bookId, chapterNum);
-
-      } catch (err) {
-        console.error(`[VerseScreen] Error loading verse data from DB:`, err);
-        setError(err instanceof Error ? err.message : "Failed to load verses");
-        setBookName(bookId); // Reset to param on error
-      } finally {
-        setIsLoading(false);
-      }
+      } // End of if(isSelectedDownloaded || IS_WEB)
     };
 
-    // Only load if translation is selected and params exist
-    if (selectedTranslationId && bookId && chapterNumberParam) {
-        loadVerseData();
-    } else {
-         setError("Missing translation, book, or chapter information.");
-         setVerses([]);
-         setIsLoading(false);
-    }
+    // Call loadVerseData whenever dependencies change
+    loadVerseData();
 
-  }, [selectedTranslationId, selectedTranslation, bookId, chapterNumberParam, setCurrentLocation, isSelectedDownloaded]); // Add isSelectedDownloaded dependency
+  }, [selectedTranslationId, selectedTranslation, bookId, chapterNumberParam, setCurrentLocation, isSelectedDownloaded, isDbReady]);
 
   // Update header title dynamically
   const screenTitle = useMemo(() => 
@@ -164,7 +153,7 @@ export default function BibleVerseReaderScreen() {
         {!isLoading && !error && isSelectedDownloaded && verses.length > 0 && (
           <FlashList
             data={verses}
-            estimatedItemSize={50} // Adjust
+            estimatedItemSize={50} // Adjust based on expected text height
             renderItem={({ item }) => {
               // item is now { verse: number, text: string }
               return (
@@ -172,23 +161,13 @@ export default function BibleVerseReaderScreen() {
                   <Text className="text-sm font-bold w-8 pt-1">
                     {item.verse} 
                   </Text>
-                  <View style={{ flex: 1 }}>
-                     {item.text && item.text.trim() !== '' ? (
-                         <RenderHTML
-                            contentWidth={width - 64} // Adjust width based on padding/margins
-                            source={{ html: item.text }} // Use item.text directly
-                            baseStyle={{ color: 'black', fontSize: 16 }} // Consistent font size
-                            tagsStyles={tagsStyles}
-                        />
-                     ) : (
-                         <Text style={{color: '#999', fontSize: 16, fontStyle: 'italic'}}>[Verse text not available]</Text>
-                     )}
-                  </View>
+                  {/* Render plain text directly */}
+                  <Text style={{ flex: 1, fontSize: 16 }}> 
+                    {item.text?.trim() || '[Verse text not available]'} 
+                  </Text>
                 </View>
               );
             }}
-            // Use verse number for key - requires combining with something if verse numbers aren't unique (e.g., verse 0)
-            // Assuming verse number is unique within the chapter for now
             keyExtractor={(item) => item.verse.toString()}
           />
         )}
