@@ -84,47 +84,49 @@ export function Message({ content, isUser, timestamp, context }: MessageProps) {
 
   return (
     <View style={[styles.container, isUser ? styles.userContainer : styles.botContainer]}>
-      {context && context.verses.length > 0 && (
-        <Pressable 
-          style={styles.contextButton} 
-          onPress={() => setIsContextExpanded(!isContextExpanded)}
-        >
-          <Text style={[styles.contextButtonText, isUser ? styles.userContextButtonText : styles.botContextButtonText]}>
-            {isContextExpanded ? '↑ Hide Bible verses' : '↓ View Bible verses'} ({context.verses.length})
-          </Text>
-        </Pressable>
-      )}
-      
-      {context && isContextExpanded && (
-        <View style={[styles.contextContainer, isUser ? styles.userContextContainer : styles.botContextContainer]}>
-          {context.verses.map((verse, index) => (
-            <View key={index} style={styles.contextItem}>
-              <Text style={[
-                styles.contextReference,
-                isUser ? styles.userContextReference : styles.botContextReference
-              ]}>
-                {verse.reference}
-              </Text>
-              <Text style={[
-                styles.contextText,
-                isUser ? styles.userContextText : styles.botContextText
-              ]}>
-                "{verse.text}"
-              </Text>
-            </View>
-          ))}
-        </View>
-      )}
-      
-      {isUser ? (
-        // Keep plain text for user messages
-        <Text style={[styles.text, styles.userText]}>{content}</Text>
-      ) : (
-        // Use markdown for bot responses
-        <Markdown style={markdownStyles}>
-          {content}
-        </Markdown>
-      )}
+      <View style={styles.contentWrapper}>
+        {context && context.verses.length > 0 && (
+          <Pressable 
+            style={styles.contextButton} 
+            onPress={() => setIsContextExpanded(!isContextExpanded)}
+          >
+            <Text style={[styles.contextButtonText, isUser ? styles.userContextButtonText : styles.botContextButtonText]}>
+              {isContextExpanded ? '↑ Hide Bible verses' : '↓ View Bible verses'} ({context.verses.length})
+            </Text>
+          </Pressable>
+        )}
+        
+        {context && isContextExpanded && (
+          <View style={[styles.contextContainer, isUser ? styles.userContextContainer : styles.botContextContainer]}>
+            {context.verses.map((verse, index) => (
+              <View key={index} style={styles.contextItem}>
+                <Text style={[
+                  styles.contextReference,
+                  isUser ? styles.userContextReference : styles.botContextReference
+                ]}>
+                  {verse.reference}
+                </Text>
+                <Text style={[
+                  styles.contextText,
+                  isUser ? styles.userContextText : styles.botContextText
+                ]}>
+                  "{verse.text}"
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+        
+        {isUser ? (
+          // Keep plain text for user messages
+          <Text style={[styles.text, styles.userText]}>{content}</Text>
+        ) : (
+          // Use markdown for bot responses
+          <Markdown style={markdownStyles}>
+            {content}
+          </Markdown>
+        )}
+      </View>
       
       <Text style={[styles.timestamp, isUser ? styles.userTimestamp : styles.botTimestamp]}>{time}</Text>
     </View>
@@ -142,6 +144,10 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 1,
+    position: "relative",
+  },
+  contentWrapper: {
+    marginBottom: 14, // Space for timestamp at bottom
   },
   userContainer: {
     alignSelf: "flex-end",
@@ -163,8 +169,9 @@ const styles = StyleSheet.create({
   },
   timestamp: {
     fontSize: 12,
-    marginTop: 4,
-    alignSelf: "flex-end",
+    position: "absolute",
+    bottom: 6,
+    right: 16,
   },
   userTimestamp: {
     color: "rgba(255, 255, 255, 0.7)",
