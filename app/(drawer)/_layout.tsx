@@ -1,6 +1,7 @@
 import { Ionicons, MaterialIcons } from "@expo/vector-icons"
 import { Link } from "expo-router"
 import { Drawer } from "expo-router/drawer"
+import React from 'react';
 
 import { HeaderButton } from "~/components/HeaderButton"
 import { HeaderNewChatButton } from "~/components/chat/HeaderNewChatButton"
@@ -38,6 +39,15 @@ const HomeScreenLayout = () => (
         headerTitle: "Bible",
         drawerLabel: "Bible",
         drawerIcon: ({ size, color }) => <Ionicons name="book-sharp" size={size} color={color} />,
+        headerRight: () => <HeaderNewChatButton />,
+      }}
+    />
+    <Drawer.Screen
+      name="favourites"
+      options={{
+        headerTitle: "Favourites",
+        drawerLabel: "Favourites",
+        drawerIcon: ({ size, color }) => <MaterialIcons name="favorite" size={size} color={color} />,
         headerRight: () => <HeaderNewChatButton />,
       }}
     />

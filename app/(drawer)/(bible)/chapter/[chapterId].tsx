@@ -1,12 +1,13 @@
 import { FlashList } from "@shopify/flash-list";
-import { Text, View, Platform } from "react-native";
-import { Stack, useLocalSearchParams, useNavigation } from "expo-router";
+import { Text, View, Platform, StyleSheet, Pressable } from "react-native";
+import { Stack, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { useEffect, useState, useMemo } from "react";
 import React from 'react';
+import ContextMenuView, { type ContextMenuAction } from 'react-native-context-menu-view';
 
 import { Container } from "~/components/Container";
 import { useAppStore } from "~/store/store";
-import { getVerses, getBooks, type Verse, type AppBook } from "~/db/database";
+import { getVerses, getBooks, type Verse, type AppBook, type FavouriteVerse } from "~/db/database";
 import { type ScrollmapperTranslationInfo } from "~/config/translationMap";
 
 const IS_WEB = Platform.OS === 'web';
@@ -15,6 +16,7 @@ export default function BibleVerseReaderScreen() {
   // Get params based on the new route structure: [bookId]/[chapterNumber]
   const { bookId, chapterNumber: chapterNumberParam } = useLocalSearchParams<{ bookId: string, chapterNumber: string }>();
   const navigation = useNavigation();
+  const router = useRouter();
   
   // Zustand state and actions
   const selectedTranslationId = useAppStore((state) => state.selectedTranslationId); // abbr
@@ -22,6 +24,9 @@ export default function BibleVerseReaderScreen() {
   const availableTranslations = useAppStore((state) => state.availableTranslations);
   const setCurrentLocation = useAppStore((state) => state.setCurrentLocation);
   const downloadedTranslationIds = useAppStore((state) => state.downloadedTranslationIds);
+  const favourites = useAppStore((state) => state.favourites);
+  const addFavourite = useAppStore((state) => state.addFavourite);
+  const removeFavourite = useAppStore((state) => state.removeFavourite);
 
   // Component state
   const [verses, setVerses] = useState<Verse[]>([]); // Use Verse type from db
@@ -41,6 +46,71 @@ export default function BibleVerseReaderScreen() {
     IS_WEB || (selectedTranslationId ? downloadedTranslationIds.includes(selectedTranslationId) : false),
     [selectedTranslationId, downloadedTranslationIds]
   );
+
+  // --- Favourites Logic ---
+  // Memoize the set of favourite references for quick lookup
+  const favouriteRefs = useMemo(() => {
+    const refs = new Set<string>();
+    favourites.forEach(fav => {
+      // Create a unique key for each favourite based on translation, book, chapter, verse
+      refs.add(`${fav.translation_id}_${fav.book_id}_${fav.chapter}_${fav.verse}`);
+    });
+    return refs;
+  }, [favourites]);
+
+  // Function to check if a specific verse is favourited
+  const isVerseFavourited = (verse: Verse): boolean => {
+    if (!selectedTranslation || !bookId || chapterNumber === null) return false;
+    const key = `${selectedTranslation.id}_${bookId}_${chapterNumber}_${verse.verse}`;
+    return favouriteRefs.has(key);
+  };
+
+  // Function to handle toggling a favourite
+  const handleToggleFavourite = (verse: Verse) => {
+    if (!selectedTranslation || !bookId || chapterNumber === null) return;
+    
+    const key = `${selectedTranslation.id}_${bookId}_${chapterNumber}_${verse.verse}`;
+    const existingFavourite = favourites.find(fav => 
+         `${fav.translation_id}_${fav.book_id}_${fav.chapter}_${fav.verse}` === key
+    );
+
+    if (existingFavourite) {
+        // Remove favourite
+        console.log(`[VerseScreen] Removing favourite ID: ${existingFavourite.id}`);
+        removeFavourite(existingFavourite.id);
+    } else {
+        // Add favourite
+        const newFavourite: Omit<FavouriteVerse, 'id' | 'created_at'> = {
+            translation_id: selectedTranslation.id,
+            book_id: bookId,
+            chapter: chapterNumber,
+            verse: verse.verse,
+            text: verse.text // Store the text
+        };
+        console.log(`[VerseScreen] Adding new favourite:`, newFavourite);
+        addFavourite(newFavourite);
+    }
+  };
+  // --- End Favourites Logic ---
+
+  // --- Send to Chat Logic ---
+  const handleSendToChat = (verse: Verse) => {
+    if (!selectedTranslation || !bookId || chapterNumber === null) return;
+
+    const reference = `${bookName || bookId} ${chapterNumber}:${verse.verse} (${selectedTranslation.abbr})`;
+    const textToSend = verse.text?.trim() || '';
+    
+    console.log(`[VerseScreen] Sending to chat: ${reference}`);
+    // Navigate to chat screen, passing data as params
+    router.push({
+        pathname: '/(drawer)/(chat)/index', // Target the chat screen directly
+        params: {
+            verseReference: reference,
+            verseText: textToSend
+        }
+    });
+  };
+  // --- End Send to Chat Logic ---
 
   useEffect(() => {
     const loadVerseData = async () => {
@@ -132,7 +202,7 @@ export default function BibleVerseReaderScreen() {
 
   return (
     <Container>
-      <View className="flex-1 p-4">
+      <View style={styles.container}>
         {isLoading && <Text>Loading verses...</Text>}
         {error && <Text className="text-red-500">Error: {error}</Text>}
         
@@ -153,25 +223,101 @@ export default function BibleVerseReaderScreen() {
         {!isLoading && !error && isSelectedDownloaded && verses.length > 0 && (
           <FlashList
             data={verses}
-            estimatedItemSize={50} // Adjust based on expected text height
-            renderItem={({ item }) => {
-              // item is now { verse: number, text: string }
+            estimatedItemSize={50} 
+            renderItem={({ item }) => { 
+              const isFavourited = isVerseFavourited(item);
+              
+              // Define menu actions for this specific verse
+              const menuActions: ContextMenuAction[] = [
+                {
+                  title: isFavourited ? "Unfavourite" : "Favourite",
+                  systemIcon: isFavourited ? 'star.fill' : 'star', // SF Symbols (iOS)
+                  // destructive: isFavourited, // Optional: make unfavourite red
+                },
+                {
+                  title: "Send to Chat",
+                  systemIcon: 'paperplane', // SF Symbols (iOS)
+                },
+                 {
+                   title: "Copy Verse",
+                   systemIcon: 'doc.on.doc', // SF Symbols (iOS)
+                 },
+              ];
+              
               return (
-                <View className="flex-row mb-2">
-                  <Text className="text-sm font-bold w-8 pt-1">
-                    {item.verse} 
-                  </Text>
-                  {/* Render plain text directly */}
-                  <Text style={{ flex: 1, fontSize: 16 }}> 
-                    {item.text?.trim() || '[Verse text not available]'} 
-                  </Text>
-                </View>
+                <ContextMenuView
+                  actions={menuActions}
+                  onPress={({ nativeEvent }: { nativeEvent: { index: number; name: string } }) => { 
+                    console.log(`[VerseScreen] Context menu action pressed: index=${nativeEvent.index}, title='${nativeEvent.name}'`);
+                    switch (nativeEvent.index) {
+                      case 0: // Favourite/Unfavourite
+                        handleToggleFavourite(item);
+                        break;
+                      case 1: // Send to Chat
+                        handleSendToChat(item);
+                        break;
+                       case 2: // Copy Verse
+                         // TODO: Implement Clipboard logic
+                         console.log("[VerseScreen] Copy action selected (not implemented)");
+                         // import { Clipboard } from 'react-native';
+                         // const reference = `${bookName || bookId} ${chapterNumber}:${item.verse} (${selectedTranslation?.abbr})`;
+                         // Clipboard.setString(`${reference}\n${item.text?.trim()}`);
+                         break;
+                    }
+                  }}
+                  // style={styles.contextMenuWrapper} // Optional wrapper style
+                >
+                    {/* The actual verse row content */}
+                    <View style={styles.verseRow}>                  
+                      <Text style={styles.verseNumber}>
+                        {item.verse} 
+                      </Text>
+                      <Text style={styles.verseText}> 
+                        {item.text?.trim() || '[Verse text not available]'} 
+                      </Text>
+                    </View>
+                </ContextMenuView>
               );
             }}
             keyExtractor={(item) => item.verse.toString()}
+            extraData={favourites} // Still needed for fav updates
           />
         )}
       </View>
     </Container>
   );
-} 
+}
+
+// Update Styles
+const styles = StyleSheet.create({
+    container: { // Added container style for padding
+      flex: 1,
+      paddingHorizontal: 15,
+      paddingTop: 10,
+    },
+    // contextMenuWrapper: { // Optional: if needed
+    //   // Styles for the wrapper if needed
+    // },
+    verseRow: {
+      flexDirection: 'row',
+      marginBottom: 12, 
+      paddingVertical: 4, // Add some vertical padding inside the touch target
+      alignItems: 'flex-start', 
+      // Remove icon container style
+    },
+    verseNumber: {
+      fontSize: 13, 
+      fontWeight: 'bold',
+      width: 28, 
+      textAlign: 'right',
+      marginRight: 8, // Increased space 
+      color: '#555',
+      paddingTop: 2, // Align with text top slightly better
+    },
+    verseText: {
+      flex: 1, 
+      fontSize: 17, 
+      lineHeight: 24, 
+      // Remove margin (no icon on the right anymore)
+    },
+}); 

@@ -7,7 +7,8 @@ import { loadApiKeys as loadKeysFromSecureStore } from '~/utils/apiKeyManager';
 import { Platform } from 'react-native'; // Import Platform
 import { listDownloadedDbs } from '../services/fileDownloader'; // Import file system helper
 import { scrollmapperTranslationMap, type ScrollmapperTranslationInfo } from '~/config/translationMap'; // Import our map
-import { switchActiveDatabase } from '~/db/database'; // Import database switching function
+import { switchActiveDatabase, loadFavouritesFromDb, addFavouriteToDb, removeFavouriteFromDb, type FavouriteVerse } from '~/db/database'; // Import database switching function and DB functions
+import { Alert } from 'react-native'; // Import Alert for feedback
 
 const IS_WEB = Platform.OS === 'web';
 const SELECTED_TRANSLATION_KEY = 'selectedTranslationId';
@@ -41,6 +42,11 @@ export interface AppState {
   // --- Add DB Status ---
   isDbReady: boolean; // Flag to indicate if the active DB matches the selected ID and is ready
 
+  // --- Favourites State ---
+  favourites: FavouriteVerse[];
+  favouritesLoading: boolean;
+  favouritesError: string | null;
+
   // Actions (functions to modify state)
   loadApiKeys: () => Promise<void>;
   // Update type for setting available translations
@@ -54,6 +60,11 @@ export interface AppState {
   setDownloadStatus: (isDownloading: boolean, translationId?: string | null, progress?: number, error?: string | null) => void;
   clearDownloadStatus: () => void;
   initializeStore: () => Promise<void>; // Add initializeStore to actions
+
+  // --- Favourites Actions ---
+  loadFavourites: () => Promise<void>;
+  addFavourite: (verse: Omit<FavouriteVerse, 'id' | 'created_at'>) => Promise<void>;
+  removeFavourite: (favouriteId: number) => Promise<void>; // Use DB id
 }
 
 // Define the creator function with the explicit type
@@ -75,6 +86,11 @@ const createAppState: StateCreator<AppState> = (set, get) => ({
   downloadError: null,
   // --- Init DB Status ---
   isDbReady: false, // Start as not ready
+
+  // --- Init Favourites State ---
+  favourites: [],
+  favouritesLoading: false,
+  favouritesError: null,
 
   // Actions Implementation
   loadApiKeys: async () => {
@@ -175,6 +191,61 @@ const createAppState: StateCreator<AppState> = (set, get) => ({
       downloadProgress: 0,
       downloadError: null
   }),
+
+  // --- Favourites Actions Implementation ---
+  loadFavourites: async () => {
+    if (IS_WEB) return; // Favourites only stored in native DB for now
+    console.log("[Store Favourites] Loading favourites...");
+    set({ favouritesLoading: true, favouritesError: null });
+    try {
+        const loadedFavourites = await loadFavouritesFromDb();
+        console.log(`[Store Favourites] Loaded ${loadedFavourites.length} favourites from DB.`);
+        set({ favourites: loadedFavourites, favouritesLoading: false });
+    } catch (error) {
+        console.error("[Store Favourites] Error loading favourites:", error);
+        set({ favouritesError: error instanceof Error ? error.message : String(error), favouritesLoading: false });
+    }
+  },
+
+  addFavourite: async (verse: Omit<FavouriteVerse, 'id' | 'created_at'>) => {
+    if (IS_WEB) return; // Favourites only stored in native DB
+    console.log(`[Store Favourites] Adding favourite: ${verse.book_id} ${verse.chapter}:${verse.verse} (${verse.translation_id})`);
+    try {
+        const newId = await addFavouriteToDb(verse);
+        if (newId) {
+            // Optimistically add to state or reload?
+            // Let's reload for consistency and to get the ID/timestamp
+             await get().loadFavourites(); 
+            // Alternatively, add manually:
+            // const newFavourite = { ...verse, id: newId, created_at: new Date().toISOString() };
+            // set(state => ({ favourites: [...state.favourites, newFavourite] }));
+             console.log(`[Store Favourites] Favourite added successfully (ID: ${newId}). Reloaded list.`);
+        } else {
+             console.warn("[Store Favourites] addFavouriteToDb did not return a new ID (likely duplicate).");
+        }
+    } catch (error) {
+        console.error("[Store Favourites] Error adding favourite:", error);
+        // Optionally set favouritesError here
+        Alert.alert("Error", "Could not save favourite."); // Provide feedback
+    }
+  },
+
+  removeFavourite: async (favouriteId) => {
+    if (IS_WEB) return; // Favourites only stored in native DB
+    console.log(`[Store Favourites] Removing favourite with ID: ${favouriteId}`);
+    try {
+        await removeFavouriteFromDb(favouriteId);
+        // Update state by filtering locally (more efficient than reload)
+        set(state => ({ 
+            favourites: state.favourites.filter(fav => fav.id !== favouriteId) 
+        }));
+        console.log(`[Store Favourites] Favourite removed successfully.`);
+    } catch (error) {
+        console.error("[Store Favourites] Error removing favourite:", error);
+        // Optionally set favouritesError here
+         Alert.alert("Error", "Could not remove favourite."); // Provide feedback
+    }
+  },
 
   // --- Refactored initializeStore ---
   initializeStore: async () => {
@@ -309,6 +380,12 @@ const createAppState: StateCreator<AppState> = (set, get) => ({
         // Update db readiness based on the final success status
         set({ isDbReady: success });
         console.log(`[Store] Initial DB readiness set to: ${success}`);
+    }
+
+    // --- Load Favourites during Initialization ---
+    if (!IS_WEB) {
+      console.log("[Store Initialize] Triggering initial favourites load...");
+      get().loadFavourites(); // Load favourites after DB is ready
     }
 
     console.log("[Store] Initialization complete.");

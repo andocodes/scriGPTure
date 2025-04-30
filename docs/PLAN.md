@@ -45,14 +45,19 @@ This document outlines the development plan for the scriGPTure Bible app.
 2.  **UI:**
     *   Integrate existing chat components (`components/chat/`) into the `app/(drawer)/(chat)/index.tsx` screen.
     *   Connect UI elements (input, message list) to Zustand state.
+    *   **Implement Chat Context UI:** Design and implement UI elements (e.g., dismissible cards above the input) to display verse references sent from the Bible screen as active context items.
 3.  **Logic:**
     *   Define the desired "personality" in a system prompt.
+    *   **Handle Incoming Verse Context:** Modify the chat screen to receive verse reference/text parameters from navigation.
+    *   **Manage Context State:** Implement state management (likely within the chat screen's local state or a dedicated context hook) to track the list of active verse context items.
     *   Implement the function to:
         *   Take user input from `ChatInput`.
-        *   Send the system prompt + conversation history + user input to a selected free model via OpenRouter.
+        *   Gather the active verse context items (references and text).
+        *   Send the system prompt + conversation history + active verse contexts + user input to a selected free model via OpenRouter.
         *   Handle the streaming or complete response.
         *   Update the message list in Zustand.
         *   Display loading indicators (`LoadingMessage`).
+        *   Clear active verse contexts after the message is sent (or provide UI to manage/keep them).
 
 **Phase 3: Search Functionality**
 

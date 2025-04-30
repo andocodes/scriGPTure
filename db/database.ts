@@ -31,6 +31,26 @@ async function openMainDatabase(): Promise<void> {
     isMainDbOpen = true;
     currentlyAttachedDb = null; // Ensure tracker is reset on open
     console.log(`[Database] Main persistent database (${mainDbName}) opened successfully.`);
+
+    // --- Initialize Favourites Table --- 
+    // Ensure the favourites table exists in the main DB
+    await mainDb.execAsync(`
+        PRAGMA journal_mode = WAL; -- Optional: Improve write performance
+        CREATE TABLE IF NOT EXISTS favourites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            translation_id TEXT NOT NULL,
+            book_id TEXT NOT NULL, 
+            chapter INTEGER NOT NULL,
+            verse INTEGER NOT NULL,
+            text TEXT NOT NULL, -- Store the verse text for display
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            -- Add a unique constraint to prevent duplicates
+            UNIQUE(translation_id, book_id, chapter, verse)
+        );
+    `);
+    console.log("[Database] Favourites table initialized (or already exists).");
+    // --- End Favourites Table Init ---
+
   } catch (error) {
     console.error(`[Database] Failed to open main persistent database (${mainDbName}):`, error);
     mainDb = null;
@@ -214,11 +234,87 @@ async function getVersesInternal(abbr: string, bookStringId: string, chapter: nu
 // If write operations are needed later (e.g., for user notes), they would need careful re-implementation 
 // possibly using a separate database file to avoid modifying the downloaded translation dbs.
 
+// --- Favourites CRUD Functions ---
+
+// Define FavouriteVerse Type (matches table schema)
+export interface FavouriteVerse {
+    id: number; // From DB
+    translation_id: string;
+    book_id: string;
+    chapter: number;
+    verse: number;
+    text: string;
+    created_at: string; // ISO Date string
+}
+
+// Function to load all favourites
+export async function loadFavouritesFromDb(): Promise<FavouriteVerse[]> {
+    if (IS_WEB || !mainDb) {
+        console.warn("[Database Favourites] Cannot load, no main DB connection.");
+        return [];
+    }
+    try {
+        const results = await mainDb.getAllAsync<FavouriteVerse>(
+            'SELECT id, translation_id, book_id, chapter, verse, text, created_at FROM favourites ORDER BY created_at DESC'
+        );
+        return results;
+    } catch (error) {
+        console.error("[Database Favourites] Error loading favourites from DB:", error);
+        throw error; // Re-throw for store to handle
+    }
+}
+
+// Function to add a favourite
+// Input type omits id and created_at, as they are auto-generated
+export async function addFavouriteToDb(fav: Omit<FavouriteVerse, 'id' | 'created_at'>): Promise<number | null> {
+    if (IS_WEB || !mainDb) {
+        console.warn("[Database Favourites] Cannot add, no main DB connection.");
+        return null;
+    }
+    const sql = `
+        INSERT INTO favourites (translation_id, book_id, chapter, verse, text)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(translation_id, book_id, chapter, verse) DO NOTHING;
+    `;
+    try {
+        const result = await mainDb.runAsync(sql, [
+            fav.translation_id,
+            fav.book_id,
+            fav.chapter,
+            fav.verse,
+            fav.text
+        ]);
+        // Return the ID of the inserted row, or null if conflict occurred
+        return result.lastInsertRowId > 0 ? result.lastInsertRowId : null; 
+    } catch (error) {
+        console.error("[Database Favourites] Error adding favourite to DB:", error);
+        throw error; // Re-throw for store to handle
+    }
+}
+
+// Function to remove a favourite by its DB ID
+export async function removeFavouriteFromDb(id: number): Promise<void> {
+    if (IS_WEB || !mainDb) {
+        console.warn("[Database Favourites] Cannot remove, no main DB connection.");
+        return;
+    }
+    try {
+        await mainDb.runAsync('DELETE FROM favourites WHERE id = ?', [id]);
+    } catch (error) {
+        console.error(`[Database Favourites] Error removing favourite (ID: ${id}) from DB:`, error);
+        throw error; // Re-throw for store to handle
+    }
+}
+
 // Export the public API
 export {
     // switchActiveDatabase, // Removed: Already exported at definition
     getBooksInternal as getBooks,
     getChaptersInternal as getChapters,
     getVersesInternal as getVerses,
+    // Add new exports
+    // loadFavouritesFromDb, // Exported at definition
+    // addFavouriteToDb, // Exported at definition
+    // removeFavouriteFromDb, // Exported at definition
     // Types are exported at definition
 }; 

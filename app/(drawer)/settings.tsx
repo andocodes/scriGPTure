@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { View, Text, FlatList, ActivityIndicator, Pressable, StyleSheet, Platform, Alert, TextInput, TouchableOpacity } from 'react-native';
+import { View, Text, SectionList, ActivityIndicator, Pressable, StyleSheet, Platform, Alert, TextInput, TouchableOpacity } from 'react-native';
 import { Stack } from 'expo-router';
 
 import { Container } from '~/components/Container';
@@ -39,26 +39,46 @@ export default function SettingsScreen() {
     const [searchTerm, setSearchTerm] = useState('');
 
     // The list is now derived directly from the store + download status
-    const displayList = useMemo(() => {
+    const sections = useMemo(() => {
         const downloadedSet = new Set(downloadedTranslationIds);
-        return availableTranslations.map(t => ({
+        const baseList = availableTranslations.map(t => ({
             ...t,
             // isDownloaded is based on presence in downloadedTranslationIds from store
             isDownloaded: IS_WEB ? false : downloadedSet.has(t.id), // Use t.id (abbr)
             isActive: t.id === selectedTranslationId,
         }));
-    }, [availableTranslations, downloadedTranslationIds, selectedTranslationId]);
 
-    // Filter logic: derive filtered list based on searchTerm
-    const filteredList = useMemo(() => displayList.filter(item => {
-        if (!searchTerm) return true; // Show all if search is empty
-        const lowerSearchTerm = searchTerm.toLowerCase();
-        return (
-            item.name.toLowerCase().includes(lowerSearchTerm) ||
-            item.abbr.toLowerCase().includes(lowerSearchTerm) ||
-            item.lang.toLowerCase().includes(lowerSearchTerm)
-        );
-    }), [displayList, searchTerm]);
+        // Apply search filter
+        const filteredList = baseList.filter(item => {
+            if (!searchTerm) return true;
+            const lowerSearchTerm = searchTerm.toLowerCase();
+            return (
+                item.name.toLowerCase().includes(lowerSearchTerm) ||
+                item.abbr.toLowerCase().includes(lowerSearchTerm) ||
+                item.lang.toLowerCase().includes(lowerSearchTerm)
+            );
+        });
+
+        // Separate into sections
+        const downloaded = filteredList.filter(item => item.isDownloaded);
+        const available = filteredList.filter(item => !item.isDownloaded);
+
+        const result = [];
+        if (downloaded.length > 0) {
+            result.push({ title: "Downloaded", data: downloaded });
+        }
+        if (available.length > 0) {
+            result.push({ title: "Available for Download", data: available });
+        }
+        // Handle empty case after filtering
+        if (result.length === 0 && searchTerm) {
+            result.push({ title: "No Matches", data: [] });
+        } else if (result.length === 0) {
+            result.push({ title: "Available for Download", data: [] }); // Default if nothing downloaded yet
+        }
+
+        return result;
+    }, [availableTranslations, downloadedTranslationIds, selectedTranslationId, searchTerm]);
 
     // --- Event Handlers ---
 
@@ -113,6 +133,10 @@ export default function SettingsScreen() {
                             await deleteDbFile(item.dbFileName);
                             removeDownloadedTranslation(item.id); // Update store
                             console.log(`[Settings] Deleted ${item.dbFileName} successfully.`);
+                            if (item.id === selectedTranslationId) {
+                                console.log(`[Settings] Deleted the active translation (${item.id}), clearing selection.`);
+                                setSelectedTranslation(null); // Clear selection to detach DB
+                            }
                         } catch (err) {
                              console.error(`[Settings] Failed to delete ${item.dbFileName}:`, err);
                              Alert.alert("Delete Error", err instanceof Error ? err.message : "An unknown error occurred.");
@@ -140,6 +164,7 @@ export default function SettingsScreen() {
                     styles.itemBase,
                     isItemActive && styles.itemActive,
                     (pressed || pressDisabled) && styles.itemDisabled,
+                    { marginBottom: 10 }
                 ]}
                 // Select if downloaded, otherwise trigger download
                 onPress={() => isItemDownloaded ? handleSelectItem(item) : handleDownloadItem(item)}
@@ -172,6 +197,13 @@ export default function SettingsScreen() {
         );
     };
 
+    // Add Section Header Renderer
+    const renderSectionHeader = ({ section: { title } }: { section: { title: string } }) => (
+        <View style={styles.sectionHeaderContainer}>
+            <Text style={styles.sectionHeaderText}>{title}</Text>
+        </View>
+    );
+
     return (
         <Container>
             <Stack.Screen options={{ title: 'Settings & Downloads' }} />
@@ -192,13 +224,13 @@ export default function SettingsScreen() {
                 {/* Global download error display */} 
                 {downloadError && !isDownloading && <Text style={[styles.errorText, {marginTop: 5}]}>Download Error: {downloadError}</Text>}
                 
-                <FlatList
-                    data={filteredList}
+                <SectionList
+                    sections={sections}
+                    keyExtractor={(item, index) => item.id + index}
                     renderItem={renderItem}
-                    keyExtractor={(item) => item.id}
-                    ListEmptyComponent={<Text>No translations match your search.</Text>}
-                    // Add necessary extraData for FlatList updates
-                    extraData={{ selectedTranslationId, downloadedTranslationIds, isDownloading, downloadProgress }}
+                    renderSectionHeader={renderSectionHeader}
+                    ListEmptyComponent={<Text>No translations available.</Text>}
+                    stickySectionHeadersEnabled={true}
                 />
                 
             </View>
@@ -211,9 +243,10 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         padding: 15, // Add some padding
+        backgroundColor: '#f0f0f0', // Add a light grey background to the main container for contrast
     },
     searchInput: {
-        height: 40,
+        height: 45,
         borderColor: '#ccc',
         borderWidth: 1,
         borderRadius: 8,
@@ -222,26 +255,43 @@ const styles = StyleSheet.create({
         backgroundColor: '#fff',
         fontSize: 16,
     },
+    sectionHeaderContainer: {
+        paddingHorizontal: 10,
+        paddingTop: 15,
+        paddingBottom: 8,
+        backgroundColor: '#f0f0f0',
+        borderBottomWidth: 1,
+        borderBottomColor: '#ddd',
+    },
+    sectionHeaderText: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#333',
+        marginBottom: 5,
+    },
     itemBase: {
         backgroundColor: '#fff',
-        paddingVertical: 12, // Adjust padding
-        paddingHorizontal: 15, // Adjust padding
-        marginBottom: 12, // Increased spacing
+        padding: 15,
         borderRadius: 8,
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        borderWidth: 1,
-        borderColor: '#ddd',
+        shadowColor: "#000",
+        shadowOffset: {
+            width: 0,
+            height: 1,
+        },
+        shadowOpacity: 0.18,
+        shadowRadius: 1.00,
+        elevation: 1,
     },
     itemActive: {
-        borderColor: '#c53030', // Darker Red-700 for border
+        borderColor: '#007AFF',
         borderWidth: 2,
-        backgroundColor: '#fed7d7', // Lighter Red-100 background for active
+        backgroundColor: '#e7f3ff',
     },
     itemDisabled: {
-        opacity: 0.5, // Keep disabled opacity
-        backgroundColor: '#f7fafc', // Lighter grey background when disabled
+        opacity: 0.6,
     },
     infoContainer: {
         flex: 1,
@@ -249,63 +299,56 @@ const styles = StyleSheet.create({
     },
     name: {
         fontSize: 16,
-        fontWeight: '600', // Semibold
+        fontWeight: 'bold',
         marginBottom: 3,
     },
     language: {
-        fontSize: 13, // Smaller language text
-        color: '#718096', // Gray-600
+        fontSize: 13,
+        color: '#666',
     },
     statusContainer: {
-        // Removed minWidth, let content size it
-        alignItems: 'flex-end', // Keep outer container aligned right
-        justifyContent: 'center'
+        alignItems: 'flex-end',
+        minWidth: 100,
     },
     statusText: {
-        fontSize: 14,
-        color: '#4a5568', // Gray-700
+        fontSize: 13,
+        color: '#888',
     },
     downloadedContainer: { 
-        // Arrange text and delete button horizontally
-        flexDirection: 'row',
-        alignItems: 'center',
+        alignItems: 'flex-end',
     },
     downloadedText: {
-        fontSize: 14,
-        color: '#38a169', // Green-600
-        // Remove margin bottom
-        // marginBottom: 4, 
+        fontSize: 13,
+        color: 'green',
+        fontWeight: 'bold',
+        marginBottom: 5,
     },
     activeText: {
-      fontSize: 14,
-      color: '#c53030', // Red-700 for active text too
-      fontWeight: 'bold',
-      // Remove margin bottom
-      // marginBottom: 4,
+        fontSize: 13,
+        color: '#007AFF',
+        fontWeight: 'bold',
+        marginBottom: 5, 
     },
-    downloadButton: { 
+    deleteButton: {
+    },
+    deleteButtonText: {
+        color: '#FF3B30',
+        fontSize: 13,
+        textDecorationLine: 'underline',
+    },
+    downloadButton: {
         fontSize: 14,
-        color: '#c53030', // Make Download text red
+        color: '#FF3B30', // Red color
         fontWeight: 'bold',
     },
-    deleteButton: { 
-       paddingVertical: 2,
-       // Add left margin for spacing
-       marginLeft: 8, 
-    },
-    deleteButtonText: { // Style for the delete text itself
-        fontSize: 12,
-        color: '#e53e3e', // Red-600
-        // fontWeight: 'bold',
-    },
     webNote: {
-      fontSize: 14,
-      color: '#a0aec0', // Gray-500
-      fontStyle: 'italic'
+        fontSize: 13,
+        color: '#aaa',
+        fontStyle: 'italic',
     },
     errorText: {
-        color: '#e53e3e',
+        color: 'red',
+        marginBottom: 10,
         textAlign: 'center',
-        marginVertical: 10, // Use vertical margin
     },
 }); 

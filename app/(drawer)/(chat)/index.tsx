@@ -1,5 +1,7 @@
-import { useRef, useState } from "react"
+import { useRef, useState, useEffect } from "react"
 import { KeyboardAvoidingView, Platform, ScrollView, View } from "react-native"
+import { useLocalSearchParams } from "expo-router"
+import React from 'react'
 import { Container } from "~/components/Container"
 import { ChatInput } from "~/components/chat/ChatInput"
 import { LoadingMessage } from "~/components/chat/LoadingMessage"
@@ -10,6 +12,20 @@ export default function ChatScreen() {
   const { messages, setMessages } = useMessages()
   const [isLoading, setIsLoading] = useState(false)
   const scrollViewRef = useRef<ScrollView>(null)
+  const [inputValue, setInputValue] = useState("")
+
+  const params = useLocalSearchParams<{ verseReference?: string; verseText?: string }>()
+
+  useEffect(() => {
+    if (params.verseReference && params.verseText) {
+      console.log("[ChatScreen] Received verse params:", params)
+      const pretext = `Regarding ${params.verseReference}:
+"${params.verseText}"
+
+My question is: `
+      setInputValue(pretext)
+    }
+  }, [params])
 
   const handleSend = async (content: string) => {
     const newMessage = {
@@ -21,6 +37,9 @@ export default function ChatScreen() {
 
     setMessages([...messages, newMessage])
     setIsLoading(true)
+
+    // Clear input after sending
+    setInputValue("")
 
     // Simulate AI response
     setTimeout(() => {
@@ -61,7 +80,11 @@ export default function ChatScreen() {
           {isLoading && <LoadingMessage />}
         </ScrollView>
 
-        <ChatInput onSend={handleSend} />
+        <ChatInput 
+          inputValue={inputValue} 
+          onInputChange={setInputValue} 
+          onSend={handleSend} 
+        />
       </KeyboardAvoidingView>
     </Container>
   )
