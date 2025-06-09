@@ -43,7 +43,7 @@ An AI-powered Bible study companion mobile application that combines Bible readi
 
 1. Clone the repository:
    ```
-   git clone https://github.com/yourusername/scripture.git
+   git clone https://github.com/andocodes/scripture.git
    cd scripture
    ```
 
@@ -54,7 +54,7 @@ An AI-powered Bible study companion mobile application that combines Bible readi
 
 3. Configure API keys:
    - Create an account at [OpenRouter](https://openrouter.ai/) to obtain an API key
-   - Update the API key in the app (see `app/_layout.tsx`) or use the settings screen
+   - Update the API key in the app (see `app/_layout.tsx` - future functionality might have this step automated) 
 
 4. Start the development server:
    ```
